@@ -1,0 +1,39 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36623.8
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OohelpSoft.Extensions.BlazorLeaflet", "src\OohelpSoft.Extensions.BlazorLeaflet\OohelpSoft.Extensions.BlazorLeaflet.csproj", "{98BCA9C6-8DF8-B2F8-06C3-26DB6F6BE313}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{A6540E13-1007-42BB-BB8D-99D78C33FDCC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OohelpSoft.Extensions.BlazorLeaflet.BlazorApp", "test\OohelpSoft.Extensions.BlazorLeaflet.BlazorApp\OohelpSoft.Extensions.BlazorLeaflet.BlazorApp.csproj", "{C402EA6F-EE9F-42B3-9961-87D3251A566C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{98BCA9C6-8DF8-B2F8-06C3-26DB6F6BE313}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{98BCA9C6-8DF8-B2F8-06C3-26DB6F6BE313}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{98BCA9C6-8DF8-B2F8-06C3-26DB6F6BE313}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{98BCA9C6-8DF8-B2F8-06C3-26DB6F6BE313}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C402EA6F-EE9F-42B3-9961-87D3251A566C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C402EA6F-EE9F-42B3-9961-87D3251A566C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C402EA6F-EE9F-42B3-9961-87D3251A566C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C402EA6F-EE9F-42B3-9961-87D3251A566C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{98BCA9C6-8DF8-B2F8-06C3-26DB6F6BE313} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{C402EA6F-EE9F-42B3-9961-87D3251A566C} = {A6540E13-1007-42BB-BB8D-99D78C33FDCC}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {76472585-2CC5-4231-AEE8-63B4F9F0DF8D}
+	EndGlobalSection
+EndGlobal

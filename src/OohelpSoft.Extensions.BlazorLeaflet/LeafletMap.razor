@@ -1,0 +1,14 @@
+﻿@using OohelpSoft.BlazorLeaflet.Maps
+
+
+<div id="@Id" style="height:@Height; width:@Width;"></div>
+
+
+
+@code
+{
+    [Parameter] public string Id { get; set; } = "leaflet-map";
+    [Parameter] public string Height { get; set; } = "500px";
+    [Parameter] public string Width { get; set; } = "100%";
+    [Parameter] public MapOptions Options { get; set; } = MapOptions.Default();
+}
