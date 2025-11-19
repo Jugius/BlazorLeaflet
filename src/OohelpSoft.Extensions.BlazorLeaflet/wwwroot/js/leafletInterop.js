@@ -171,15 +171,10 @@ function createMarkerInternal(m) {
     let icon = undefined;
 
     if (m.icon) {
-        const iconOptions = {
-            iconUrl: m.icon.isSvg
-                ? `data:image/svg+xml;base64,${btoa(m.icon.url)}`
-                : m.icon.url,
-            iconSize: m.icon.iconSize,
-            iconAnchor: m.icon.iconAnchor,
-            popupAnchor: m.icon.popupAnchor
-        };
-        icon = L.icon(iconOptions);
+        icon = L.icon(m.icon);
+    }
+    else {
+        ico = L.icon.default
     }
 
     const marker = L.marker(m.location, { icon });

@@ -1,6 +1,5 @@
 ﻿using OohelpSoft.BlazorLeaflet.Base;
 using OohelpSoft.BlazorLeaflet.Base.Types;
-using OohelpSoft.BlazorLeaflet.Maps;
 using System.Text.Json.Serialization;
 
 namespace OohelpSoft.BlazorLeaflet.Layers.UI;
@@ -10,5 +9,5 @@ public class Marker : Layer
     public Location Location { get; set; } = default!;
 
     [JsonPropertyName("icon")]
-    public MarkerIcon? Icon { get; set; }    
+    public IconOptions? Icon { get; set; }    
 }
