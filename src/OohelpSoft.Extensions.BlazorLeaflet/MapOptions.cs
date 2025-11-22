@@ -1,7 +1,7 @@
 ﻿using OohelpSoft.BlazorLeaflet.Base.Types;
 using System.Text.Json.Serialization;
 
-namespace OohelpSoft.BlazorLeaflet.Maps;
+namespace OohelpSoft.BlazorLeaflet;
 public class MapOptions
 {
     [JsonPropertyName("center")]
@@ -33,11 +33,4 @@ public class MapOptions
 
     [JsonPropertyName("preferCanvas")]
     public bool? PreferCanvas { get; set; }
-
-    public static MapOptions Default()
-        => new()
-        {
-            Center = new Location(50.440769, 30.522495),
-            Zoom = 13
-        };
 }

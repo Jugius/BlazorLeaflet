@@ -10,5 +10,5 @@
     [Parameter] public string Id { get; set; } = "leaflet-map";
     [Parameter] public string Height { get; set; } = "500px";
     [Parameter] public string Width { get; set; } = "100%";
-    [Parameter] public MapOptions Options { get; set; } = MapOptions.Default();
+    [Parameter] public MapOptions Options { get; set; } = new();
 }
