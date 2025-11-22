@@ -4,15 +4,15 @@ using System.Text.Json.Serialization;
 namespace OohelpSoft.BlazorLeaflet.Base.Types;
 
 [JsonConverter(typeof(PointJsonConverter))]
-public class Point
+public readonly struct Point
 {
     [JsonPropertyName("x")]
-    public int X { get; set; }
+    public int X { get; }
 
     [JsonPropertyName("y")]
-    public int Y { get; set; }
+    public int Y { get; }
 
-    public Point() { }
+    [JsonConstructor]
     public Point(int x, int y)
     {
         X = x;

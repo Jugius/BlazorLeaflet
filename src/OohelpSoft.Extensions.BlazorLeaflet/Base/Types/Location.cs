@@ -5,12 +5,13 @@ namespace OohelpSoft.BlazorLeaflet.Base.Types;
 
 
 [JsonConverter(typeof(LocationJsonConverter))]
-public class Location
+public readonly struct Location
 {
-    public double Latitude { get; set; }
-    public double Longitude { get; set; }
+    public double Latitude { get; }
+    public double Longitude { get; }
     public Location() { }
 
+    [JsonConstructor]
     public Location(double latitude, double longitude)
     {
         Latitude = latitude;

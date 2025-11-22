@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 namespace OohelpSoft.BlazorLeaflet.JsonConverters;
 internal class PointJsonConverter : JsonConverter<Point>
 {
-    public override Point? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    public override Point Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (reader.TokenType != JsonTokenType.StartArray)
             throw new JsonException("Expected start of array for Point");
