@@ -10,18 +10,31 @@ let _dotNetObjRef = null;
 // ----------------------------
 //  Lazy Leaflet loader
 // ----------------------------
+
+const config = {
+    api: {
+        src: "./_content/OohelpSoft.Extensions.BlazorLeaflet/js/leaflet.js",
+        href: "./_content/OohelpSoft.Extensions.BlazorLeaflet/css/leaflet.css"
+    },
+    apiCluster: {
+        src: "./_content/OohelpSoft.Extensions.BlazorLeaflet/js/leaflet.markercluster.js",
+        href1: "./_content/OohelpSoft.Extensions.BlazorLeaflet/css/MarkerCluster.css",
+        href2: "./_content/OohelpSoft.Extensions.BlazorLeaflet/css/MarkerCluster.Default.css"
+    }
+}
 async function ensureLeafletLoaded() {
     if (window.L) return; // уже загружен
 
     // Проверяем, нет ли в документе <script src="...leaflet.js">
-    if (!document.querySelector('script[src$="leaflet.js"]')) {
+    if (!document.querySelector(`script[src="${config.api.src}"]`)) {
         const link = document.createElement('link');
         link.rel = 'stylesheet';
-        link.href = './_content/OohelpSoft.Extensions.BlazorLeaflet/css/leaflet.css';
-        document.head.appendChild(link);
+        link.href = config.api.href;   
 
         const script = document.createElement('script');
-        script.src = './_content/OohelpSoft.Extensions.BlazorLeaflet/js/leaflet.js';
+        script.src = config.api.src;
+
+        document.head.appendChild(link);
         document.head.appendChild(script);
 
         await new Promise((resolve, reject) => {
@@ -30,11 +43,32 @@ async function ensureLeafletLoaded() {
         });
     }
 
+    if (!document.querySelector(`script[src="${config.apiCluster.src}"]`)) {
+
+        const link1 = document.createElement('link');
+        link1.rel = 'stylesheet';
+        link1.href = config.apiCluster.href1;        
+
+        const link2 = document.createElement('link');
+        link2.rel = 'stylesheet';
+        link2.href = config.apiCluster.href2;        
+
+        const scriptCluster = document.createElement('script');
+        scriptCluster.src = config.apiCluster.src;        
+
+        document.head.appendChild(link1);
+        document.head.appendChild(link2);
+        document.head.appendChild(scriptCluster);
+
+        await new Promise((resolve, reject) => {
+            scriptCluster.onload = resolve;
+            scriptCluster.onerror = reject;
+        });
+    }
+
     // подождем чуть-чуть, чтобы Leaflet проинициализировался
     await new Promise(r => setTimeout(r, 50));
 }
-
-
 
 export async function createMap(id, optionsJson, dotNetObjRef) {
 
@@ -76,6 +110,25 @@ export async function createFeatureGroupAsync(mapId, layerName) {
         console.log(`Layer created: ${layerName}`);
     }
 }
+
+export async function createMarkerClusterLayerAsync(mapId, layerName, optionsJson) {
+    const map = window._leafletMaps?.[mapId];
+    if (!map) return;
+
+    if (!window._leafletLayers[mapId][layerName]) {
+        const o = JSON.parse(optionsJson);
+        const layer = L.markerClusterGroup(o).addTo(map);
+
+        window._leafletLayers[mapId][layerName] = layer;
+        window._leafletMarkers[mapId][layerName] = {};
+
+        console.log(`ClusterLayer created: ${layerName}`);
+    }
+}
+
+
+
+
 
 // ----------------------------
 //  Add ONE marker to layer
@@ -169,6 +222,8 @@ export async function addMarkersAsync(mapId, markersJson) {
 }
 function createMarkerInternal(m) {
     let icon = undefined;
+
+    console.log(m);
 
     if (m.icon) {
         icon = L.icon(m.icon);
