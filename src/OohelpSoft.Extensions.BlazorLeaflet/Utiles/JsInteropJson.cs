@@ -12,5 +12,7 @@ internal static class JsInteropJson
     };
 
     public static string Serialize<T>(T value)
-        => JsonSerializer.Serialize(value, _options);
+    {
+        return JsonSerializer.Serialize(value, value!.GetType(), _options);
+    }
 }

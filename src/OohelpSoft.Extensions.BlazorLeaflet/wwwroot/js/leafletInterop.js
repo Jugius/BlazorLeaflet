@@ -63,7 +63,7 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
 // ----------------------------
 //  Create LayerGroup
 // ----------------------------
-export async function createLayerGroupAsync(mapId, layerName) {
+export async function createFeatureGroupAsync(mapId, layerName) {
     const map = window._leafletMaps?.[mapId];
     if (!map) return;
 

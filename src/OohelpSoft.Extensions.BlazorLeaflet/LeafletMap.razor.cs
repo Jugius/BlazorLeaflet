@@ -11,9 +11,10 @@ public sealed partial class LeafletMap
     private IJSRuntime JSRuntime { get; set; } = null!;
     private IJSObjectReference? leafletInterop;
     private TaskCompletionSource<bool>? _mapReadyTcs;
+    private readonly Dictionary<string, MarkerGroupLayer> _layers = new(StringComparer.OrdinalIgnoreCase);
     
     public bool IsMapInitialized => _mapReadyTcs?.Task.IsCompleted == true;
-    public List<LayerGroup> LayerGroups { get; } = [];
+    public IEnumerable<MarkerGroupLayer> LayerGroups => _layers.Values;
     [Parameter] public EventCallback MapCreated { get; set; }
 
 
@@ -72,16 +73,15 @@ public sealed partial class LeafletMap
     {
         await leafletInterop!.InvokeVoidAsync("addMarkersAsync", this.Id, JsInteropJson.Serialize(markers));
     }
-    public async Task<LayerGroup> GetOrCreateLayerGroupAsync(string layerId)
+    public async Task<FeatureGroup> GetOrCreateFeatureGroupAsync(string layerId)
     {
         await EnsureMapReadyAsync();
 
-        var existing = LayerGroups.FirstOrDefault(g => g.Id == layerId);
-        if (existing != null)
-            return existing;
+        if(_layers.TryGetValue(layerId, out var existing) && existing is FeatureGroup layerGroup)
+            return layerGroup;
 
-        var layer = await LayerGroup.Create(this.leafletInterop!, this.Id, layerId);
-        LayerGroups.Add(layer);
+        var layer = await FeatureGroup.Create(this.leafletInterop!, this.Id, layerId);
+        _layers[layerId] = layer;
         return layer;
     }
     public async Task FitBoundsToLayerGroupsAsync(params string[] layerGroupIds)
