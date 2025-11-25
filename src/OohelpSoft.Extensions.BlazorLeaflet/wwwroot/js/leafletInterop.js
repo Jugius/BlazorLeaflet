@@ -79,8 +79,16 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
     const options = JSON.parse(optionsJson);
     const map = L.map(id, options);
 
-    L.tileLayer(options.tileUrl || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: options.attribution || '&copy; OpenStreetMap contributors'
+    if (!options.tileLayers || options.tileLayers.length === 0) {
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    }
+    else {
+        for (const l of options.tileLayers) {
+            const tl = createTileLayerInternal(l);
+            tl.addTo(map);
+        }
+    }
+
     }).addTo(map);
 
     window._leafletMaps[id] = map;

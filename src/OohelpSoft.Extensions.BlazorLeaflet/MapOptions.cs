@@ -1,4 +1,5 @@
 ﻿using OohelpSoft.BlazorLeaflet.Base.Types;
+using OohelpSoft.BlazorLeaflet.Layers.Raster;
 using System.Text.Json.Serialization;
 
 namespace OohelpSoft.BlazorLeaflet;
@@ -33,4 +34,6 @@ public class MapOptions
 
     [JsonPropertyName("preferCanvas")]
     public bool? PreferCanvas { get; set; }
+
+    public List<TileLayer> TileLayers { get; set; } = [];
 }
