@@ -89,7 +89,12 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
         }
     }
 
+    L.control.scale({
+        metric: true,
+        imperial: false,
+        maxWidth: 200
     }).addTo(map);
+
 
     window._leafletMaps[id] = map;
 
@@ -133,9 +138,6 @@ export async function createMarkerClusterLayerAsync(mapId, layerName, optionsJso
         console.log(`ClusterLayer created: ${layerName}`);
     }
 }
-
-
-
 
 
 // ----------------------------
@@ -231,14 +233,9 @@ export async function addMarkersAsync(mapId, markersJson) {
 function createMarkerInternal(m) {
     let icon = undefined;
 
-    console.log(m);
-
     if (m.icon) {
         icon = L.icon(m.icon);
-    }
-    else {
-        ico = L.icon.default
-    }
+    }    
 
     const marker = L.marker(m.location, { icon });
 
