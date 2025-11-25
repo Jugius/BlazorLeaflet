@@ -248,6 +248,16 @@ function createMarkerInternal(m) {
 
     return marker;
 }
+function createTileLayerInternal(l) {
+    let options = undefined;
+
+    if (l.attribution) {
+        options = { attribution: l.attribution };
+    }
+    const tileLayer = L.tileLayer(l.tyleUrl, options);
+    return tileLayer;
+}
+
 
 export async function fitBoundsToLayerGroups(mapId, layerGroupIds) {
     const map = window._leafletMaps?.[mapId];
