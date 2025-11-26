@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace OohelpSoft.BlazorLeaflet.Base;
 
+[JsonDerivedType(typeof(Marker))]
 public abstract class MarkerLayer : Layer
 {
     [JsonPropertyName("location")]

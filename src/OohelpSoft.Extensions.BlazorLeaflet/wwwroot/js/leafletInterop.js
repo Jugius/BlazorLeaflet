@@ -95,6 +95,7 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
         maxWidth: 200
     }).addTo(map);
 
+    L.control.layers({}, {}, { collapsed: false, hideSingleBase: true });
 
     window._leafletMaps[id] = map;
 
@@ -102,7 +103,6 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
     window._leafletLayers[id] = window._leafletLayers[id] || {};
     window._leafletMarkers[id] = window._leafletMarkers[id] || {};
 
-    console.log("leaflet Map created", id);
     _dotNetObjRef.invokeMethodAsync('OnJsMapCreated');
     return true;
 }
@@ -113,6 +113,7 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
 
     const l = JSON.parse(layerJson);
     const layer = createMarkerGroupLayerInternal(l);
+
     const layerId = l.id;
 
     window._leafletLayers[mapId][layerId] = layer;
@@ -120,8 +121,7 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
 
     if (l.markers?.length > 0) {
         const markersDict = window._leafletMarkers[mapId][layerId];
-
-        for (const m of items) {
+        for (const m of l.markers) {
             const marker = createMarkerInternal(m);
             layer.addLayer(marker);
             markersDict[m.id] = marker;
@@ -130,57 +130,12 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
 
     layer.addTo(map);
 }
-
-// ----------------------------
-//  Create LayerGroup
-// ----------------------------
-export async function createFeatureGroupAsync(mapId, layerName) {
-    const map = window._leafletMaps?.[mapId];
-    if (!map) return;
-
-    if (!window._leafletLayers[mapId][layerName]) {
-        const layer = L.featureGroup().addTo(map);
-
-        window._leafletLayers[mapId][layerName] = layer;
-        window._leafletMarkers[mapId][layerName] = {};
-
-        console.log(`Layer created: ${layerName}`);
-    }
-}
-
-export async function createMarkerClusterLayerAsync(mapId, layerName, optionsJson) {
-    const map = window._leafletMaps?.[mapId];
-    if (!map) return;
-
-    if (!window._leafletLayers[mapId][layerName]) {
-        const o = JSON.parse(optionsJson);
-        const layer = L.markerClusterGroup(o).addTo(map);
-
-        window._leafletLayers[mapId][layerName] = layer;
-        window._leafletMarkers[mapId][layerName] = {};
-
-        console.log(`ClusterLayer created: ${layerName}`);
-    }
-}
-
-
-// ----------------------------
-//  Add ONE marker to layer
-// ----------------------------
-export async function addMarkerToLayerAsync(mapId, layerName, markerJson) {
-    const map = window._leafletMaps?.[mapId];
-    if (!map) return;
-
-    const layer = window._leafletLayers[mapId]?.[layerName];
+export function clearLayer(mapId, layerId) {
+    const layer = window._leafletLayers?.[mapId]?.[layerId];
     if (!layer) return;
 
-    const markersDict = window._leafletMarkers[mapId][layerName];
-
-    const m = JSON.parse(markerJson);
-    const marker = createMarkerInternal(m);
-
-    layer.addLayer(marker);
-    markersDict[m.id] = marker;
+    layer.clearLayers();
+    window._leafletMarkers[mapId][layerId] = {};
 }
 
 // ----------------------------
@@ -200,23 +155,6 @@ export async function addMarkersToLayerAsync(mapId, layerName, markersJson) {
         const marker = createMarkerInternal(m);
         layer.addLayer(marker);
         markersDict[m.id] = marker;
-    }
-}
-
-// ----------------------------
-//  Remove ONE marker by ID
-// ----------------------------
-export async function removeMarkerByIdAsync(mapId, layerName, id) {
-    const layer = window._leafletLayers[mapId]?.[layerName];
-    if (!layer) return;
-
-    const markersDict = window._leafletMarkers[mapId]?.[layerName];
-    if (!markersDict) return;
-
-    const marker = markersDict[id];
-    if (marker) {
-        layer.removeLayer(marker);
-        delete markersDict[id];
     }
 }
 
@@ -242,11 +180,11 @@ export async function removeMarkersByIdsAsync(mapId, layerName, idsJson) {
     }
 }
 
+
+
 export async function addMarkersAsync(mapId, markersJson) {
     const markers = JSON.parse(markersJson);
     const map = window._leafletMaps?.[mapId];
-    console.log("first marker:", markers[0]);
-    console.log("first marker location:", markers[0].location)
     if (!map) return;
 
     for (const m of markers) {
@@ -255,13 +193,13 @@ export async function addMarkersAsync(mapId, markersJson) {
     }
 }
 function createMarkerInternal(m) {
-    let icon = undefined;
+    let markerOptions = {};
 
     if (m.icon) {
-        icon = L.icon(m.icon);
-    }    
+        markerOptions.icon = L.icon(m.icon);
+    }
 
-    const marker = L.marker(m.location, { icon });
+    const marker = L.marker(m.location, markerOptions);
 
     if (m.popup) {
         marker.bindPopup(m.popup.html, m.popup.options);
@@ -291,7 +229,7 @@ function createMarkerGroupLayerInternal(l) {
         layer = L.featureGroup(lOptions);
     }
     else if (l.layerType === "MarkerClusterLayer") {
-        layer = L.markerClusterGroup(lOptions)
+        layer = L.markerClusterGroup(lOptions);
     }
     else {
         layer = L.layerGroup();

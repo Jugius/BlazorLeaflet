@@ -1,7 +1,6 @@
 ﻿using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using OohelpSoft.BlazorLeaflet.Base;
-using OohelpSoft.BlazorLeaflet.Layers;
 using OohelpSoft.BlazorLeaflet.Layers.UI;
 using OohelpSoft.BlazorLeaflet.Utiles;
 
@@ -61,32 +60,12 @@ public sealed partial class LeafletMap : IMap
     {
         await leafletInterop!.InvokeVoidAsync("addMarkersAsync", this.Id, JsInteropJson.Serialize(markers));
     }
-    public async Task<FeatureGroup> GetOrCreateFeatureGroupAsync(string layerId)
+    public async Task AddMarkerGroupLayerAsync(MarkerGroupLayer layerGroup)
     {
         await EnsureMapReadyAsync();
 
-        if(_layers.TryGetValue(layerId, out var existing) && existing is FeatureGroup layerGroup)
-            return layerGroup;
-
-        var layer = await FeatureGroup.Create(this.leafletInterop!, this.Id, layerId);
-        _layers[layerId] = layer;
-        return layer;
-    }
-    public async Task<MarkerClusterLayer> GetOrCreateClusterLayerAsync(string layerId)
-    {
-        await EnsureMapReadyAsync();
-
-        if (_layers.TryGetValue(layerId, out var existing) && existing is MarkerClusterLayer clasterLayer)
-            return clasterLayer;
-
-        var options = new MarkerClusterLayerOptions {
-            DisableClusteringAtZoom = 12,
-            ShowCoverageOnHover = false,
-        };
-
-        clasterLayer = await MarkerClusterLayer.Create(this.leafletInterop!, this.Id, layerId, options);
-        _layers[layerId] = clasterLayer;
-        return clasterLayer;
+        await layerGroup.AddTo(this);
+        _layers[layerGroup.Id] = layerGroup;        
     }
     public async Task FitBoundsToLayerGroupsAsync(params string[] layerGroupIds)
     {
