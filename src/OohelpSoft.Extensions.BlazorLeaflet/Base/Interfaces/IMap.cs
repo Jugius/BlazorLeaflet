@@ -1,6 +1,6 @@
 ﻿using Microsoft.JSInterop;
 
-namespace OohelpSoft.BlazorLeaflet;
+namespace OohelpSoft.BlazorLeaflet.Base.Interfaces;
 
 public interface IMap
 {

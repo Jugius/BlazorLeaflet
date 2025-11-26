@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using OohelpSoft.BlazorLeaflet.Base;
+using OohelpSoft.BlazorLeaflet.Base.Interfaces;
 using OohelpSoft.BlazorLeaflet.Layers.UI;
 using OohelpSoft.BlazorLeaflet.Utiles;
 

@@ -1,4 +1,5 @@
 ﻿using Microsoft.JSInterop;
+using OohelpSoft.BlazorLeaflet.Base.Interfaces;
 using OohelpSoft.BlazorLeaflet.Utiles;
 using System.Text.Json.Serialization;
 
