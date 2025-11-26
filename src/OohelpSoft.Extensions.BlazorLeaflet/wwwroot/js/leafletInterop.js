@@ -96,11 +96,9 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
         window._leafletLayersControl[id] = layersControl;
     }
 
-    L.control.scale({
-        metric: true,
-        imperial: false,
-        maxWidth: 200
-    }).addTo(map);
+    if (options.scaleControl) {
+        L.control.scale(options.scaleControl).addTo(map);
+    }
 
     window._leafletMaps[id] = map;
 

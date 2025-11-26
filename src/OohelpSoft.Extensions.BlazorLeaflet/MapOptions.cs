@@ -38,4 +38,5 @@ public class MapOptions
 
     public List<TileLayer> TileLayers { get; set; } = [];
     public LayersControlOptions? LayersControl { get; set; }
+    public ScaleControlOptions? ScaleControl { get; set; }
 }
