@@ -6,7 +6,7 @@ using OohelpSoft.BlazorLeaflet.Layers.UI;
 using OohelpSoft.BlazorLeaflet.Utiles;
 
 namespace OohelpSoft.BlazorLeaflet;
-public sealed partial class LeafletMap
+public sealed partial class LeafletMap : IMap
 {
     [Inject]
     private IJSRuntime JSRuntime { get; set; } = null!;
@@ -14,7 +14,7 @@ public sealed partial class LeafletMap
     private TaskCompletionSource<bool>? _mapReadyTcs;
     private readonly Dictionary<string, MarkerGroupLayer> _layers = new(StringComparer.OrdinalIgnoreCase);
     
-    public bool IsMapInitialized => _mapReadyTcs?.Task.IsCompleted == true;
+    public IJSObjectReference Interop => this.leafletInterop!;    
     public IEnumerable<MarkerGroupLayer> LayerGroups => _layers.Values;
     [Parameter] public EventCallback MapCreated { get; set; }
 
@@ -31,33 +31,20 @@ public sealed partial class LeafletMap
     }
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender)
-        {
-            Console.WriteLine("LeafletMap - Not first render");
-            return;
-        }
+        if (!firstRender) return;
 
         if (leafletInterop == null)
         {
-            Console.WriteLine("Loading leafletInterop..");
             leafletInterop = await JSRuntime.InvokeAsync<IJSObjectReference>(
                 "import", "./_content/OohelpSoft.Extensions.BlazorLeaflet/js/leafletInterop.js");
 
-            try
-            {
-                DotNetObjectReference<LeafletMap> dotNetObjectRef = DotNetObjectReference.Create(this);
-                Console.WriteLine($"Creating map {this.Id}");
-                await leafletInterop.InvokeVoidAsync("createMap", this.Id, JsInteropJson.Serialize(Options), dotNetObjectRef);
-            }
-            catch (JSException ex)
-            {
-                Console.Error.WriteLine($"JSException: {ex.Message}");
-            }
+            DotNetObjectReference<LeafletMap> dotNetObjectRef = DotNetObjectReference.Create(this);
+            await leafletInterop.InvokeVoidAsync("createMap", this.Id, JsInteropJson.Serialize(Options), dotNetObjectRef);
         }
     }
     public Task EnsureMapReadyAsync(CancellationToken ct = default)
     {
-        if (_mapReadyTcs == null) _mapReadyTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mapReadyTcs ??= new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (ct == default) return _mapReadyTcs.Task;
         // поддержка отмены
         return _mapReadyTcs.Task.WaitAsync(ct);

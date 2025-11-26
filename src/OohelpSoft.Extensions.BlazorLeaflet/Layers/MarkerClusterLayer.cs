@@ -3,17 +3,14 @@ using OohelpSoft.BlazorLeaflet.Utiles;
 
 namespace OohelpSoft.BlazorLeaflet.Layers;
 
-public class MarkerClusterLayer : Base.MarkerGroupLayer
+public class MarkerClusterLayer(string layerId) : Base.MarkerGroupLayer(layerId)
 {
-    private MarkerClusterLayer(IJSObjectReference leafletInterop, string mapId, string layerId) : base(leafletInterop, mapId, layerId)
-    {
-    }
+    public override string LayerType => "MarkerClusterLayer";
 
-    internal static async Task<MarkerClusterLayer> Create(IJSObjectReference leafletInterop, string mapId, string layerId, MarkerClusterLayerOptions? options)
+    public override async Task AddTo(IMap map)
     {
-        var o = options ?? new MarkerClusterLayerOptions();
-        var layer = new MarkerClusterLayer(leafletInterop, mapId, layerId);
-        await leafletInterop!.InvokeVoidAsync("createMarkerClusterLayerAsync", mapId, layerId, JsInteropJson.Serialize(o));
-        return layer;
+        this.map = map;
+        var layerJson = JsInteropJson.Serialize(this);
+        await this.map.Interop.InvokeVoidAsync("addMarkerGroupLayer", this.map.Id, layerJson);
     }
 }

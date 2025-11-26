@@ -1,16 +1,15 @@
 ﻿using Microsoft.JSInterop;
+using OohelpSoft.BlazorLeaflet.Utiles;
 
 namespace OohelpSoft.BlazorLeaflet.Layers;
-public class FeatureGroup : Base.MarkerGroupLayer
+public class FeatureGroup(string layerId) : Base.MarkerGroupLayer(layerId)
 {
-    private FeatureGroup(IJSObjectReference leafletInterop, string mapId, string layerId) : base(leafletInterop, mapId, layerId)
-    {
-    }
+    public override string LayerType => "FeatureGroup";
 
-    internal static async Task<FeatureGroup> Create(IJSObjectReference leafletInterop, string mapId, string layerId)
-    { 
-        var layer = new FeatureGroup(leafletInterop, mapId, layerId);
-        await leafletInterop!.InvokeVoidAsync("createFeatureGroupAsync", mapId, layerId);
-        return layer;
+    public override async Task AddTo(IMap map)
+    {
+        this.map = map;
+        var layerJson = JsInteropJson.Serialize(this);
+        await this.map.Interop.InvokeVoidAsync("addMarkerGroupLayer", this.map.Id, layerJson);
     }
 }

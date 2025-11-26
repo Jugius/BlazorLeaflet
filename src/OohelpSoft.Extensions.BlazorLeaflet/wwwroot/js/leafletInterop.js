@@ -107,6 +107,30 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
     return true;
 }
 
+export async function addMarkerGroupLayer(mapId, layerJson) {
+    const map = window._leafletMaps?.[mapId];
+    if (!map) return;
+
+    const l = JSON.parse(layerJson);
+    const layer = createMarkerGroupLayerInternal(l);
+    const layerId = l.id;
+
+    window._leafletLayers[mapId][layerId] = layer;
+    window._leafletMarkers[mapId][layerId] = {};
+
+    if (l.markers?.length > 0) {
+        const markersDict = window._leafletMarkers[mapId][layerId];
+
+        for (const m of items) {
+            const marker = createMarkerInternal(m);
+            layer.addLayer(marker);
+            markersDict[m.id] = marker;
+        }
+    }
+
+    layer.addTo(map);
+}
+
 // ----------------------------
 //  Create LayerGroup
 // ----------------------------
@@ -253,6 +277,26 @@ function createTileLayerInternal(l) {
     }
     const tileLayer = L.tileLayer(l.tyleUrl, options);
     return tileLayer;
+}
+
+function createMarkerGroupLayerInternal(l) {
+    let lOptions = undefined;
+    if (l.options) {
+        lOptions = l.options;
+    }
+
+    let layer = undefined;
+
+    if (l.layerType === "FeatureGroup") {
+        layer = L.featureGroup(lOptions);
+    }
+    else if (l.layerType === "MarkerClusterLayer") {
+        layer = L.markerClusterGroup(lOptions)
+    }
+    else {
+        layer = L.layerGroup();
+    }
+    return layer;
 }
 
 
