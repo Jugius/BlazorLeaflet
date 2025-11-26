@@ -89,13 +89,18 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
         }
     }
 
+    window._leafletLayersControl ??= {};
+    if (options.layersControl) {
+        const layersControl = L.control.layers({}, {}, options.layersControl);
+        layersControl.addTo(map);
+        window._leafletLayersControl[id] = layersControl;
+    }
+
     L.control.scale({
         metric: true,
         imperial: false,
         maxWidth: 200
     }).addTo(map);
-
-    L.control.layers({}, {}, { collapsed: false, hideSingleBase: true });
 
     window._leafletMaps[id] = map;
 
@@ -129,6 +134,14 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
     }
 
     layer.addTo(map);
+
+    const layersControl = window._leafletLayersControl[mapId];
+
+    if (layersControl) {
+        layersControl.addOverlay(layer, l.name ?? l.id);
+    }
+
+    
 }
 export function clearLayer(mapId, layerId) {
     const layer = window._leafletLayers?.[mapId]?.[layerId];
