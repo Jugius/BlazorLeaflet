@@ -213,7 +213,14 @@ function createMarkerInternal(m) {
     const marker = L.marker(m.location, markerOptions);
 
     if (m.popup) {
-        marker.bindPopup(m.popup.html, m.popup.options);
+
+        const popup = L.popup(m.popup.options).setContent(m.popup.html);
+        popup.on('add', () => {
+            // обращаемся к DOM popUp контейнеру
+            const popupElement = popup.getElement();
+            window.updatePopupAfterImagesLoad(popupElement, marker);
+        });
+        marker.bindPopup(popup);
     }
 
     return marker;
@@ -277,5 +284,21 @@ export async function fitBoundsToLayerGroups(mapId, layerGroupIds) {
     if (bounds) {
         map.fitBounds(bounds, { padding: [50, 50] });
     }
+}
+
+window.updatePopupAfterImagesLoad = function (popupElement, marker) {
+    const images = popupElement.querySelectorAll("img");
+
+    images.forEach(img => {
+        if (img.complete) {
+            // уже загружено → можно сразу обновить
+            marker.getPopup().update();
+        } else {
+            // слушаем загрузку
+            img.addEventListener("load", () => {
+                marker.getPopup().update();
+            });
+        }
+    });
 }
 
