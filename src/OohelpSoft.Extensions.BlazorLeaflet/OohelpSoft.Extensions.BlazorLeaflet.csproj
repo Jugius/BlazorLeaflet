@@ -1,8 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
 
   <PropertyGroup>
-      <TargetFramework>net9.0</TargetFramework>
-      <RazorLangVersion>9.0</RazorLangVersion>
+      <TargetFramework>net10.0</TargetFramework>
+
       <AssemblyName>OohelpSoft.Extensions.BlazorLeaflet</AssemblyName>
       <RootNamespace>OohelpSoft.BlazorLeaflet</RootNamespace>
       <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
@@ -10,22 +10,27 @@
       <Company>OoHelp.Net</Company>
       <PackageId>$(AssemblyName)</PackageId>
       <Copyright>OoHelp.Net by Andrey Sliusarev</Copyright>
-      <Description>Result Pattern</Description>
+      <Description>Simple Blazor map component</Description>
       <PackageLicenseExpression>MIT</PackageLicenseExpression>
+      <PackageProjectUrl>https://github.com/Jugius/BlazorLeaflet</PackageProjectUrl>
+      <RepositoryType>GitHub</RepositoryType>
+      <RepositoryUrl>https://github.com/Jugius/BlazorLeaflet.git</RepositoryUrl>
 
       <ImplicitUsings>enable</ImplicitUsings>
       <Nullable>enable</Nullable>
+
+      <GenerateStaticWebAssets>true</GenerateStaticWebAssets>
   </PropertyGroup>
 
 
   <ItemGroup>
     <SupportedPlatform Include="browser" />
   </ItemGroup>
-    
+
 
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="9.0.10" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.0" />
   </ItemGroup>
 
 </Project>
