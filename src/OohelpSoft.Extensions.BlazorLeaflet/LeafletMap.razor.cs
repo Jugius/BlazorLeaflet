@@ -16,7 +16,7 @@ public sealed partial class LeafletMap : IMap
     
     public IJSObjectReference Interop => this.leafletInterop!;    
     public IEnumerable<MarkerGroupLayer> LayerGroups => _layers.Values;
-    [Parameter] public EventCallback MapCreated { get; set; }
+    
 
 
     protected override void OnInitialized()
@@ -57,6 +57,13 @@ public sealed partial class LeafletMap : IMap
         _ = MapCreated.InvokeAsync(null);
     }
 
+
+    [JSInvokable]
+    public Task OnJSMarkerClick(string id) => OnMarkerClick.InvokeAsync(id);
+    public async Task RegisterMarkerClickCallback()
+    {
+        await leafletInterop!.InvokeVoidAsync("registerMarkerClickCallback");
+    }
     public async Task AddMarkersAsync(IEnumerable<Marker> markers)
     {
         await leafletInterop!.InvokeVoidAsync("addMarkersAsync", this.Id, JsInteropJson.Serialize(markers));

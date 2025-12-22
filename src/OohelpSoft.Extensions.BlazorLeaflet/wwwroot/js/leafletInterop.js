@@ -110,6 +110,14 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
     return true;
 }
 
+export function registerMarkerClickCallback() {
+    if (!_dotNetObjRef) return;
+
+    window._leafletOnMarkerClick = function (id) {
+        _dotNetObjRef.invokeMethodAsync("OnJSMarkerClick", id);
+    };
+}
+
 export async function addMarkerGroupLayer(mapId, layerJson) {
     const map = window._leafletMaps?.[mapId];
     if (!map) return;
@@ -222,6 +230,12 @@ function createMarkerInternal(m) {
         });
         marker.bindPopup(popup);
     }
+
+    marker.on('click', function (e) {
+        if (window._leafletOnMarkerClick) {
+            window._leafletOnMarkerClick(m.id);
+        }
+    });
 
     return marker;
 }

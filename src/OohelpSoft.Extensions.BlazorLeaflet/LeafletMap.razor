@@ -9,4 +9,7 @@
     [Parameter] public string Height { get; set; } = "500px";
     [Parameter] public string Width { get; set; } = "100%";
     [Parameter] public MapOptions Options { get; set; } = new();
+
+    [Parameter] public EventCallback MapCreated { get; set; }
+    [Parameter] public EventCallback<string> OnMarkerClick { get; set; }
 }
