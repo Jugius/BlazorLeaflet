@@ -1,6 +1,7 @@
 ﻿using Microsoft.JSInterop;
 using OohelpSoft.BlazorLeaflet.Base.Interfaces;
 using OohelpSoft.BlazorLeaflet.Layers.UI;
+using OohelpSoft.BlazorLeaflet.Models;
 using OohelpSoft.BlazorLeaflet.Utiles;
 using System.Text.Json.Serialization;
 
@@ -87,6 +88,13 @@ public abstract class MarkerGroupLayer : Layer
             {
                 await _map.Interop.InvokeVoidAsync("updateMarkerIcon", _map.Id, this.Id, id, JsInteropJson.Serialize(icon));
             }
+        }
+    }
+    public async Task UpdateMarkersIconsBulkAsync(List<MarkerIconUpdate> iconUpdates)
+    {
+        if (_map != null)        
+        {
+            await _map.Interop.InvokeVoidAsync("updateMarkersIconsBulk", _map.Id, this.Id, JsInteropJson.Serialize(iconUpdates));
         }
     }
 }

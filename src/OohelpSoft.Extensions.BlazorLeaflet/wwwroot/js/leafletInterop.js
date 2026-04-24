@@ -224,6 +224,25 @@ export function updateMarkerIcon(mapId, layerId, markerId, iconJson) {
         layer.refreshClusters();
     }
 }
+export function updateMarkersIconsBulk(mapId, layerId, iconUpdatesJson) {
+    const updates = JSON.parse(iconUpdatesJson);
+
+    const markersDict = window._leafletMarkers?.[mapId]?.[layerId];
+    if (!markersDict) return;
+
+    for (const u of updates) {
+        const marker = markersDict[u.id];
+        if (marker) {
+            const newIcon = L.icon(u.icon);
+            marker.setIcon(newIcon);
+        }
+    }
+
+    const layer = window._leafletLayers?.[mapId]?.[layerId];
+    if (layer && layer.refreshClusters) {
+        layer.refreshClusters();
+    }
+}
 
 function createMarkerInternal(m) {
     let markerOptions = {};
@@ -331,4 +350,3 @@ window.updatePopupAfterImagesLoad = function (popupElement, marker) {
         }
     });
 }
-
