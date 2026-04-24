@@ -199,8 +199,6 @@ export async function removeMarkersByIdsAsync(mapId, layerName, idsJson) {
     }
 }
 
-
-
 export async function addMarkersAsync(mapId, markersJson) {
     const markers = JSON.parse(markersJson);
     const map = window._leafletMaps?.[mapId];
@@ -211,6 +209,22 @@ export async function addMarkersAsync(mapId, markersJson) {
         marker.addTo(map);
     }
 }
+
+export function updateMarkerIcon(mapId, layerId, markerId, iconJson) {
+    const marker = window._leafletMarkers?.[mapId]?.[layerId]?.[markerId];
+    if (!marker) return;
+
+    const iconOptions = JSON.parse(iconJson);
+    const newIcon = L.icon(iconOptions);
+
+    marker.setIcon(newIcon);
+
+    const layer = window._leafletLayers?.[mapId]?.[layerId];
+    if (layer && layer.refreshClusters) {
+        layer.refreshClusters();
+    }
+}
+
 function createMarkerInternal(m) {
     let markerOptions = {};
 
@@ -239,6 +253,8 @@ function createMarkerInternal(m) {
 
     return marker;
 }
+
+
 function createTileLayerInternal(l) {
     let options = undefined;
 
