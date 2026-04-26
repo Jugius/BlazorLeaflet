@@ -244,6 +244,49 @@ export function updateMarkersIconsBulk(mapId, layerId, iconUpdatesJson) {
     }
 }
 
+export function focusMarker(mapId, layerId, markerId) {
+    const map = window._leafletMaps?.[mapId];
+    const layer = window._leafletLayers?.[mapId]?.[layerId];
+    const marker = window._leafletMarkers?.[mapId]?.[layerId]?.[markerId];
+
+    if (!map || !layer || !marker) {
+        console.warn("focusMarker: not found", { mapId, layerId, markerId });
+        return;
+    }
+
+    const openAndHighlight = () => {
+        // центрирование (плавное)
+        map.flyTo(marker.getLatLng(), map.getZoom(), {
+            duration: 0.5
+        });
+
+        // открыть popup
+        if (marker.getPopup()) {
+            marker.openPopup();
+        }
+
+        // подсветка
+        setTimeout(() => {
+            highlightMarker(marker);
+        }, 300);
+    };
+
+    // 💥 если это кластер
+    if (layer.zoomToShowLayer) {
+        layer.zoomToShowLayer(marker, openAndHighlight);
+    } else {
+        openAndHighlight();
+    }
+}
+function highlightMarker(marker) {
+    const el = marker._icon;
+    if (!el) return;
+
+    el.classList.remove("marker-highlight");
+    void el.offsetWidth;
+    el.classList.add("marker-highlight");
+}
+
 function createMarkerInternal(m) {
     let markerOptions = {};
 

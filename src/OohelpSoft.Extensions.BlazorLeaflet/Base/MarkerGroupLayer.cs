@@ -79,14 +79,14 @@ public abstract class MarkerGroupLayer : Layer
         this._markers.Clear();
     }
 
-    public async Task UpdateMarkerIconAsync(string id, IconOptions icon)
+    public async Task UpdateMarkerIconAsync(string markerId, IconOptions icon)
     {
-        if(_markers.TryGetValue(id, out var marker) && marker is Marker m)
+        if(_markers.TryGetValue(markerId, out var marker) && marker is Marker m)
         {
             m.Icon = icon;
             if (_map != null)
             {
-                await _map.Interop.InvokeVoidAsync("updateMarkerIcon", _map.Id, this.Id, id, JsInteropJson.Serialize(icon));
+                await _map.Interop.InvokeVoidAsync("updateMarkerIcon", _map.Id, this.Id, markerId, JsInteropJson.Serialize(icon));
             }
         }
     }
@@ -95,6 +95,13 @@ public abstract class MarkerGroupLayer : Layer
         if (_map != null)        
         {
             await _map.Interop.InvokeVoidAsync("updateMarkersIconsBulk", _map.Id, this.Id, JsInteropJson.Serialize(iconUpdates));
+        }
+    }
+    public async Task FocusMarker(string markerId)
+    {
+        if (_map != null)
+        {
+            await _map.Interop.InvokeVoidAsync("focusMarker", _map.Id, this.Id, markerId);
         }
     }
 }
