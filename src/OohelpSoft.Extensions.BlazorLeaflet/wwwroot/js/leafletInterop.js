@@ -393,3 +393,24 @@ window.updatePopupAfterImagesLoad = function (popupElement, marker) {
         }
     });
 }
+
+export function destroyMap(mapId) {
+
+    const map = window._leafletMaps?.[mapId];
+
+    if (map) {
+        map.remove();
+    }
+
+    if (window._leafletMaps) {
+        delete window._leafletMaps[mapId];
+    }
+
+    if (window._leafletLayers) {
+        delete window._leafletLayers[mapId];
+    }
+
+    if (window._leafletMarkers) {
+        delete window._leafletMarkers[mapId];
+    }
+}

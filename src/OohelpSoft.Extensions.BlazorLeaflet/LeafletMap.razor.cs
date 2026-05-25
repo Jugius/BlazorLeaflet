@@ -6,14 +6,16 @@ using OohelpSoft.BlazorLeaflet.Layers.UI;
 using OohelpSoft.BlazorLeaflet.Utiles;
 
 namespace OohelpSoft.BlazorLeaflet;
-public sealed partial class LeafletMap : IMap
+public sealed partial class LeafletMap : IMap, IAsyncDisposable
 {
     [Inject]
     private IJSRuntime JSRuntime { get; set; } = null!;
     private IJSObjectReference? leafletInterop;
     private TaskCompletionSource<bool>? _mapReadyTcs;
     private readonly Dictionary<string, MarkerGroupLayer> _layers = new(StringComparer.OrdinalIgnoreCase);
-    
+    private DotNetObjectReference<LeafletMap>? _dotNetRef;
+    private bool _disposed;
+
     public IJSObjectReference Interop => this.leafletInterop!;    
     public IEnumerable<MarkerGroupLayer> LayerGroups => _layers.Values;
     
@@ -37,9 +39,9 @@ public sealed partial class LeafletMap : IMap
         {
             leafletInterop = await JSRuntime.InvokeAsync<IJSObjectReference>(
                 "import", "./_content/OohelpSoft.Extensions.BlazorLeaflet/js/leafletInterop.js");
-
-            DotNetObjectReference<LeafletMap> dotNetObjectRef = DotNetObjectReference.Create(this);
-            await leafletInterop.InvokeVoidAsync("createMap", this.Id, JsInteropJson.Serialize(Options), dotNetObjectRef);
+            
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await leafletInterop.InvokeVoidAsync("createMap", this.Id, JsInteropJson.Serialize(Options), _dotNetRef);
         }
     }
     public Task EnsureMapReadyAsync(CancellationToken ct = default)
@@ -84,5 +86,50 @@ public sealed partial class LeafletMap : IMap
             this.Id,
             layerGroupIds
         );
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+
+        try
+        {
+            if (leafletInterop is not null)
+            {
+                try
+                {
+                    await leafletInterop.InvokeVoidAsync("destroyMap", this.Id);
+                }
+                catch (JSDisconnectedException)
+                {
+                    // normal during refresh/navigation
+                }
+                catch (ObjectDisposedException)
+                {
+                    // also safe to ignore
+                }
+
+                try
+                {
+                    await leafletInterop.DisposeAsync();
+                }
+                catch
+                {
+                    // ignore
+                }
+               
+            }
+        }
+        finally
+        {
+            _dotNetRef?.Dispose();
+
+            _layers.Clear();
+
+            _mapReadyTcs = null;
+        }
     }
 }
