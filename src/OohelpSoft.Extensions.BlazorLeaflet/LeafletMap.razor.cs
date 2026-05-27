@@ -17,8 +17,8 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
     private bool _disposed;
 
     public IJSObjectReference Interop => this.leafletInterop!;    
-    public IEnumerable<MarkerGroupLayer> LayerGroups => _layers.Values;
-    
+    public IEnumerable<MarkerGroupLayer> LayerGroups => _layers.Values;    
+    public bool TryGetLayer(string layerId, out MarkerGroupLayer? layer) => _layers!.TryGetValue(layerId, out layer);
 
 
     protected override void OnInitialized()
