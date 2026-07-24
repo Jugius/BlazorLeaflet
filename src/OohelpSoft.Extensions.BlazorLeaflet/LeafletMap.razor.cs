@@ -2,6 +2,7 @@
 using Microsoft.JSInterop;
 using OohelpSoft.BlazorLeaflet.Base;
 using OohelpSoft.BlazorLeaflet.Base.Interfaces;
+using OohelpSoft.BlazorLeaflet.Base.Types;
 using OohelpSoft.BlazorLeaflet.Layers.UI;
 using OohelpSoft.BlazorLeaflet.Utiles;
 
@@ -59,6 +60,8 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
         _ = MapCreated.InvokeAsync(null);
     }
 
+    [JSInvokable]
+    public Task OnMapPointClicked(double latitude, double longitude) => OnAddPointRequest.InvokeAsync(new Location(latitude, longitude));
 
     [JSInvokable]
     public Task OnJSMarkerClick(string id) => OnMarkerClick.InvokeAsync(id);

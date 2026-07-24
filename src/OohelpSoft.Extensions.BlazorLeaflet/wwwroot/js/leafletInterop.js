@@ -100,6 +100,11 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
         L.control.scale(options.scaleControl).addTo(map);
     }
 
+    if (options.addMarkerControl) {
+        const addMarkerCtrl = createAddMarkerControl(map, options.addMarkerControl, dotNetObjRef);
+        addMarkerCtrl.addTo(map);
+    }
+
     window._leafletMaps[id] = map;
 
     // Prepare storages
@@ -345,6 +350,79 @@ function createMarkerGroupLayerInternal(l) {
         layer = L.layerGroup();
     }
     return layer;
+}
+
+function createAddMarkerControl(map, controlOptions, dotNetObjRef) {
+    const AddMarkerControl = L.Control.extend({
+        options: {
+            position: controlOptions.position || 'topleft',
+            title: controlOptions.title || 'Добавить маркер',
+            content: controlOptions.content || '📍',
+            cursor: controlOptions.cursor || 'crosshair'
+        },
+
+        onAdd: function (map) {
+            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+            const button = L.DomUtil.create('a', 'leaflet-control-add-marker', container);
+
+            button.href = '#';
+            button.title = this.options.title;
+            button.innerHTML = this.options.content;
+            button.style.fontSize = '16px';
+            button.style.lineHeight = '30px';
+            button.style.textAlign = 'center';
+            button.style.textDecoration = 'none';
+            button.style.color = '#333';
+            button.style.display = 'block';
+
+            // Предотвращаем всплытие кликов и двойных кликов на карту
+            L.DomEvent.disableClickPropagation(container);
+            L.DomEvent.disableScrollPropagation(container);
+
+            let isAddMode = false;
+
+            L.DomEvent.on(button, 'click', (e) => {
+                L.DomEvent.preventDefault(e);
+
+                isAddMode = !isAddMode;
+
+                if (isAddMode) {
+                    button.style.backgroundColor = '#e6f7ff'; // Легкая подсветка активного состояния
+                    button.style.borderColor = '#1890ff';
+                    map.getContainer().style.cursor = this.options.cursor;
+
+                    // Однократный слушатель клика по карте
+                    map.once('click', (mapClickEvent) => {
+                        // Сбрасываем состояние кнопки и курсор
+                        isAddMode = false;
+                        button.style.backgroundColor = '#fff';
+                        button.style.borderColor = '';
+                        map.getContainer().style.cursor = '';
+
+                        // Вызываем событие в Blazor C#
+                        if (dotNetObjRef) {
+                            dotNetObjRef.invokeMethodAsync(
+                                'OnMapPointClicked',
+                                mapClickEvent.latlng.lat,
+                                mapClickEvent.latlng.lng
+                            );
+                        }
+                    });
+
+                } else {
+                    // Если пользователь нажал кнопку повторно (отменил режим)
+                    button.style.backgroundColor = '#fff';
+                    button.style.borderColor = '';
+                    map.getContainer().style.cursor = '';
+                    map.off('click');
+                }
+            });
+
+            return container;
+        }
+    });
+
+    return new AddMarkerControl();
 }
 
 
