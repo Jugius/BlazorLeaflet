@@ -1,4 +1,5 @@
 ﻿using OohelpSoft.BlazorLeaflet.JsonConverters;
+using System.Globalization;
 using System.Text.Json.Serialization;
 
 namespace OohelpSoft.BlazorLeaflet.Base.Types;
@@ -18,5 +19,6 @@ public readonly struct Location
         Longitude = longitude;
     }
 
-    public override string ToString() => $"{Latitude}, {Longitude}";
+    public override string ToString() =>
+        string.Format(CultureInfo.InvariantCulture, "{0:0.00000000},{1:0.00000000}", Latitude, Longitude);
 }
