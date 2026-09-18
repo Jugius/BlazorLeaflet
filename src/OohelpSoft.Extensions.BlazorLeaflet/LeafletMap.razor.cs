@@ -65,9 +65,18 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
 
     [JSInvokable]
     public Task OnJSMarkerClick(string id) => OnMarkerClick.InvokeAsync(id);
+
+    [JSInvokable]
+    public Task OnJSMarkerDraged(string id, double latitude, double longitude) => OnMarkerDragged.InvokeAsync(new Events.MarkerDragEvent(id, latitude, longitude));
+
+
     public async Task RegisterMarkerClickCallback()
     {
         await leafletInterop!.InvokeVoidAsync("registerMarkerClickCallback");
+    }
+    public async Task RegisterMarkerDragEndCallback()
+    {
+        await leafletInterop!.InvokeVoidAsync("registerMarkerDragEndCallback");
     }
     public async Task AddMarkersAsync(IEnumerable<Marker> markers)
     {

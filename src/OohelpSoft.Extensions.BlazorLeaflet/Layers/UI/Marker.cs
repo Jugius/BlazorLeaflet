@@ -6,5 +6,8 @@ public class Marker : MarkerLayer
 {      
 
     [JsonPropertyName("icon")]
-    public IconOptions? Icon { get; set; }    
+    public IconOptions? Icon { get; set; }
+
+    [JsonPropertyName("draggable")]
+    public bool? Draggable { get; set; }
 }

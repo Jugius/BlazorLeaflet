@@ -122,6 +122,13 @@ export function registerMarkerClickCallback() {
         _dotNetObjRef.invokeMethodAsync("OnJSMarkerClick", id);
     };
 }
+export function registerMarkerDragEndCallback() {
+    if (!_dotNetObjRef) return;
+
+    window._leafletOnMarkerDragEnd = function (id, lat, lng) {
+        _dotNetObjRef.invokeMethodAsync("OnJSMarkerDraged", id, lat, lng);
+    };
+}
 
 export async function addMarkerGroupLayer(mapId, layerJson) {
     const map = window._leafletMaps?.[mapId];
@@ -299,6 +306,10 @@ function createMarkerInternal(m) {
         markerOptions.icon = L.icon(m.icon);
     }
 
+    if (m.draggable) {
+        markerOptions.draggable = true;
+    }
+
     const marker = L.marker(m.location, markerOptions);
 
     if (m.popup) {
@@ -315,6 +326,18 @@ function createMarkerInternal(m) {
     marker.on('click', function (e) {
         if (window._leafletOnMarkerClick) {
             window._leafletOnMarkerClick(m.id);
+        }
+    });
+
+    marker.on('dragend', function () {
+        if (window._leafletOnMarkerDragEnd) {
+            const position = marker.getLatLng();
+
+            window._leafletOnMarkerDragEnd(
+                m.id,
+                position.lat,
+                position.lng
+            );
         }
     });
 
