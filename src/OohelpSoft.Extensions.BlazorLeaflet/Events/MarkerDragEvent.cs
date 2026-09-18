@@ -1,3 +1,5 @@
-﻿namespace OohelpSoft.BlazorLeaflet.Events;
+﻿using OohelpSoft.BlazorLeaflet.Base.Types;
 
-public sealed record MarkerDragEvent(string MarkerId, double Latitude, double Longitude);
+namespace OohelpSoft.BlazorLeaflet.Events;
+
+public sealed record MarkerDragEvent(string MarkerId, Location Location);
