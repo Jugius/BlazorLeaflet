@@ -5,7 +5,7 @@ window._leafletMaps = window._leafletMaps || {};
 window._leafletLayers = window._leafletLayers || {};     // mapId → { layerName → LayerGroup }
 window._leafletMarkers = window._leafletMarkers || {};    // mapId → { layerName → { id → marker } }
 
-let _dotNetObjRef = null;
+const mapContexts = new Map();
 
 // ----------------------------
 //  Lazy Leaflet loader
@@ -74,10 +74,15 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
 
     await ensureLeafletLoaded();
 
-    _dotNetObjRef = dotNetObjRef;
-
     const options = JSON.parse(optionsJson);
     const map = L.map(id, options);
+    const context = {
+        dotNetObjRef,
+        markerClickRegistered: false,
+        markerDragEndRegistered: false,
+        active: true
+    };
+    mapContexts.set(id, context);
 
     if (!options.tileLayers || options.tileLayers.length === 0) {
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
@@ -101,7 +106,7 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
     }
 
     if (options.addMarkerControl) {
-        const addMarkerCtrl = createAddMarkerControl(map, options.addMarkerControl, dotNetObjRef);
+        const addMarkerCtrl = createAddMarkerControl(map, options.addMarkerControl, context);
         addMarkerCtrl.addTo(map);
     }
 
@@ -111,28 +116,27 @@ export async function createMap(id, optionsJson, dotNetObjRef) {
     window._leafletLayers[id] = window._leafletLayers[id] || {};
     window._leafletMarkers[id] = window._leafletMarkers[id] || {};
 
-    _dotNetObjRef.invokeMethodAsync('OnJsMapCreated');
+    context.dotNetObjRef.invokeMethodAsync('OnJsMapCreated');
     return true;
 }
 
-export function registerMarkerClickCallback() {
-    if (!_dotNetObjRef) return;
+export function registerMarkerClickCallback(mapId) {
+    const context = mapContexts.get(mapId);
+    if (!context?.active) return;
 
-    window._leafletOnMarkerClick = function (id) {
-        _dotNetObjRef.invokeMethodAsync("OnJSMarkerClick", id);
-    };
+    context.markerClickRegistered = true;
 }
-export function registerMarkerDragEndCallback() {
-    if (!_dotNetObjRef) return;
+export function registerMarkerDragEndCallback(mapId) {
+    const context = mapContexts.get(mapId);
+    if (!context?.active) return;
 
-    window._leafletOnMarkerDragEnd = function (id, lat, lng) {
-        _dotNetObjRef.invokeMethodAsync("OnJSMarkerDraged", id, lat, lng);
-    };
+    context.markerDragEndRegistered = true;
 }
 
 export async function addMarkerGroupLayer(mapId, layerJson) {
     const map = window._leafletMaps?.[mapId];
-    if (!map) return;
+    const context = mapContexts.get(mapId);
+    if (!map || !context?.active) return;
 
     const l = JSON.parse(layerJson);
     const layer = createMarkerGroupLayerInternal(l);
@@ -145,7 +149,7 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
     if (l.markers?.length > 0) {
         const markersDict = window._leafletMarkers[mapId][layerId];
         for (const m of l.markers) {
-            const marker = createMarkerInternal(m);
+            const marker = createMarkerInternal(m, context);
             layer.addLayer(marker);
             markersDict[m.id] = marker;
         }
@@ -174,7 +178,8 @@ export function clearLayer(mapId, layerId) {
 // ----------------------------
 export async function addMarkersToLayerAsync(mapId, layerName, markersJson) {
     const map = window._leafletMaps?.[mapId];
-    if (!map) return;
+    const context = mapContexts.get(mapId);
+    if (!map || !context?.active) return;
 
     const layer = window._leafletLayers[mapId]?.[layerName];
     if (!layer) return;
@@ -183,7 +188,7 @@ export async function addMarkersToLayerAsync(mapId, layerName, markersJson) {
     const items = JSON.parse(markersJson);
 
     for (const m of items) {
-        const marker = createMarkerInternal(m);
+        const marker = createMarkerInternal(m, context);
         layer.addLayer(marker);
         markersDict[m.id] = marker;
     }
@@ -214,10 +219,11 @@ export async function removeMarkersByIdsAsync(mapId, layerName, idsJson) {
 export async function addMarkersAsync(mapId, markersJson) {
     const markers = JSON.parse(markersJson);
     const map = window._leafletMaps?.[mapId];
-    if (!map) return;
+    const context = mapContexts.get(mapId);
+    if (!map || !context?.active) return;
 
     for (const m of markers) {
-        const marker = createMarkerInternal(m);
+        const marker = createMarkerInternal(m, context);
         marker.addTo(map);
     }
 }
@@ -299,7 +305,7 @@ function highlightMarker(marker) {
     el.classList.add("marker-highlight");
 }
 
-function createMarkerInternal(m) {
+function createMarkerInternal(m, context) {
     let markerOptions = {};
 
     if (m.icon) {
@@ -324,16 +330,17 @@ function createMarkerInternal(m) {
     }
 
     marker.on('click', function (e) {
-        if (window._leafletOnMarkerClick) {
-            window._leafletOnMarkerClick(m.id);
+        if (context.active && context.markerClickRegistered && context.dotNetObjRef) {
+            context.dotNetObjRef.invokeMethodAsync("OnJSMarkerClick", m.id);
         }
     });
 
     marker.on('dragend', function () {
-        if (window._leafletOnMarkerDragEnd) {
+        if (context.active && context.markerDragEndRegistered && context.dotNetObjRef) {
             const position = marker.getLatLng();
 
-            window._leafletOnMarkerDragEnd(
+            context.dotNetObjRef.invokeMethodAsync(
+                "OnJSMarkerDraged",
                 m.id,
                 position.lat,
                 position.lng
@@ -375,7 +382,7 @@ function createMarkerGroupLayerInternal(l) {
     return layer;
 }
 
-function createAddMarkerControl(map, controlOptions, dotNetObjRef) {
+function createAddMarkerControl(map, controlOptions, context) {
     const AddMarkerControl = L.Control.extend({
         options: {
             position: controlOptions.position || 'topleft',
@@ -423,8 +430,8 @@ function createAddMarkerControl(map, controlOptions, dotNetObjRef) {
                         map.getContainer().style.cursor = '';
 
                         // Вызываем событие в Blazor C#
-                        if (dotNetObjRef) {
-                            dotNetObjRef.invokeMethodAsync(
+                        if (context.active && context.dotNetObjRef) {
+                            context.dotNetObjRef.invokeMethodAsync(
                                 'OnMapPointClicked',
                                 mapClickEvent.latlng.lat,
                                 mapClickEvent.latlng.lng
@@ -497,21 +504,35 @@ window.updatePopupAfterImagesLoad = function (popupElement, marker) {
 
 export function destroyMap(mapId) {
 
+    const context = mapContexts.get(mapId);
+    if (context) {
+        context.active = false;
+        context.dotNetObjRef = null;
+        mapContexts.delete(mapId);
+    }
+
     const map = window._leafletMaps?.[mapId];
 
-    if (map) {
-        map.remove();
+    try {
+        if (map) {
+            map.remove();
+        }
     }
+    finally {
+        if (window._leafletMaps) {
+            delete window._leafletMaps[mapId];
+        }
 
-    if (window._leafletMaps) {
-        delete window._leafletMaps[mapId];
-    }
+        if (window._leafletLayers) {
+            delete window._leafletLayers[mapId];
+        }
 
-    if (window._leafletLayers) {
-        delete window._leafletLayers[mapId];
-    }
+        if (window._leafletMarkers) {
+            delete window._leafletMarkers[mapId];
+        }
 
-    if (window._leafletMarkers) {
-        delete window._leafletMarkers[mapId];
+        if (window._leafletLayersControl) {
+            delete window._leafletLayersControl[mapId];
+        }
     }
 }

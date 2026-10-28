@@ -73,11 +73,11 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
 
     public async Task RegisterMarkerClickCallback()
     {
-        await leafletInterop!.InvokeVoidAsync("registerMarkerClickCallback");
+        await leafletInterop!.InvokeVoidAsync("registerMarkerClickCallback", this.Id);
     }
     public async Task RegisterMarkerDragEndCallback()
     {
-        await leafletInterop!.InvokeVoidAsync("registerMarkerDragEndCallback");
+        await leafletInterop!.InvokeVoidAsync("registerMarkerDragEndCallback", this.Id);
     }
     public async Task AddMarkersAsync(IEnumerable<Marker> markers)
     {
