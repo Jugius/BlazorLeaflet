@@ -70,54 +70,56 @@ async function ensureLeafletLoaded() {
     await new Promise(r => setTimeout(r, 50));
 }
 
-export async function createMap(id, optionsJson, dotNetObjRef) {
-
-    await ensureLeafletLoaded();
-
-    const options = JSON.parse(optionsJson);
-    const map = L.map(id, options);
+export async function createMap(id, optionsJson, dotNetObjRef, creationKey) {
+    destroyMap(id);
     const context = {
         dotNetObjRef,
+        creationKey,
+        map: null,
         markerClickRegistered: false,
         markerDragEndRegistered: false,
         active: true
     };
     mapContexts.set(id, context);
+    const isCurrent = () => context.active && mapContexts.get(id) === context;
+    try {
+        await ensureLeafletLoaded();
+        if (!isCurrent()) return false;
 
-    if (!options.tileLayers || options.tileLayers.length === 0) {
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-    }
-    else {
-        for (const l of options.tileLayers) {
-            const tl = createTileLayerInternal(l);
-            tl.addTo(map);
+        const options = JSON.parse(optionsJson);
+        const map = context.map = L.map(id, options);
+        // Publish ownership before tiles/controls can fail, so rollback can always remove this map.
+        window._leafletMaps[id] = map;
+        window._leafletLayers[id] = {};
+        window._leafletMarkers[id] = {};
+        window._leafletLayersControl ??= {};
+
+        if (!options.tileLayers || options.tileLayers.length === 0) {
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
         }
+        else {
+            for (const l of options.tileLayers) {
+                const tl = createTileLayerInternal(l);
+                tl.addTo(map);
+            }
+        }
+
+        if (options.layersControl) {
+            const layersControl = L.control.layers({}, {}, options.layersControl);
+            layersControl.addTo(map);
+            window._leafletLayersControl[id] = layersControl;
+        }
+        if (options.scaleControl) L.control.scale(options.scaleControl).addTo(map);
+        if (options.addMarkerControl) createAddMarkerControl(map, options.addMarkerControl, context).addTo(map);
+
+        await context.dotNetObjRef.invokeMethodAsync('OnJsMapCreated');
+        return isCurrent();
     }
-
-    window._leafletLayersControl ??= {};
-    if (options.layersControl) {
-        const layersControl = L.control.layers({}, {}, options.layersControl);
-        layersControl.addTo(map);
-        window._leafletLayersControl[id] = layersControl;
+    catch (error) {
+        try { releaseMap(id, context); }
+        catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Map creation and cleanup failed'); }
+        throw error;
     }
-
-    if (options.scaleControl) {
-        L.control.scale(options.scaleControl).addTo(map);
-    }
-
-    if (options.addMarkerControl) {
-        const addMarkerCtrl = createAddMarkerControl(map, options.addMarkerControl, context);
-        addMarkerCtrl.addTo(map);
-    }
-
-    window._leafletMaps[id] = map;
-
-    // Prepare storages
-    window._leafletLayers[id] = window._leafletLayers[id] || {};
-    window._leafletMarkers[id] = window._leafletMarkers[id] || {};
-
-    context.dotNetObjRef.invokeMethodAsync('OnJsMapCreated');
-    return true;
 }
 
 export function registerMarkerClickCallback(mapId) {
@@ -502,37 +504,24 @@ window.updatePopupAfterImagesLoad = function (popupElement, marker) {
     });
 }
 
-export function destroyMap(mapId) {
-
+export function destroyMap(mapId, creationKey) {
     const context = mapContexts.get(mapId);
-    if (context) {
-        context.active = false;
-        context.dotNetObjRef = null;
+    if (!context || (creationKey !== undefined && context.creationKey !== creationKey)) return;
+    releaseMap(mapId, context);
+}
+
+function releaseMap(mapId, context) {
+    context.active = false;
+    context.dotNetObjRef = null;
+    const map = context.map;
+    context.map = null;
+    // A late failure only owns this context, never a replacement with the same ID.
+    if (mapContexts.get(mapId) === context) {
         mapContexts.delete(mapId);
+        delete window._leafletMaps[mapId];
+        delete window._leafletLayers[mapId];
+        delete window._leafletMarkers[mapId];
+        if (window._leafletLayersControl) delete window._leafletLayersControl[mapId];
     }
-
-    const map = window._leafletMaps?.[mapId];
-
-    try {
-        if (map) {
-            map.remove();
-        }
-    }
-    finally {
-        if (window._leafletMaps) {
-            delete window._leafletMaps[mapId];
-        }
-
-        if (window._leafletLayers) {
-            delete window._leafletLayers[mapId];
-        }
-
-        if (window._leafletMarkers) {
-            delete window._leafletMarkers[mapId];
-        }
-
-        if (window._leafletLayersControl) {
-            delete window._leafletLayersControl[mapId];
-        }
-    }
+    map?.remove();
 }

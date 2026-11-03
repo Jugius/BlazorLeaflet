@@ -30,17 +30,21 @@ function eventSource(properties = {}) {
     };
 }
 
-async function createHarness() {
+async function createHarness({ deferredLoader = false, tileFailure = false, controlFailure = null } = {}) {
     const markers = [];
+    const maps = [];
+    const loader = [];
     const L = {
         map(id) {
-            return eventSource({
+            const map = eventSource({
                 id, markers: [], controls: [], container: { style: {} }, removeCount: 0,
                 getContainer() { return this.container; },
                 remove() { this.removeCount++; }
             });
+            maps.push(map);
+            return map;
         },
-        tileLayer() { return { addTo() {} }; },
+        tileLayer() { return { addTo() { if (tileFailure) throw new Error('tile failed'); } }; },
         marker(location) {
             const marker = eventSource({
                 getLatLng() { return { lat: location[0], lng: location[1] }; },
@@ -57,7 +61,8 @@ async function createHarness() {
             };
         },
         control: {
-            layers() { return { addTo() {}, addOverlay() {} }; }
+            layers() { return { addTo() { if (controlFailure === 'layers') throw new Error('control failed'); }, addOverlay() {} }; },
+            scale() { return { addTo() { if (controlFailure === 'scale') throw new Error('control failed'); } }; }
         },
         Control: {
             extend(definition) {
@@ -66,6 +71,7 @@ async function createHarness() {
                     addTo(map) {
                         this.container = definition.onAdd.call(this, map);
                         map.controls.push(this);
+                        if (controlFailure === 'add') throw new Error('control failed');
                     }
                 };
             }
@@ -82,8 +88,10 @@ async function createHarness() {
             on(element, name, handler) { element.on(name, handler); }
         }
     };
-    const window = { L };
-    const module = new SourceTextModule(source, { context: createContext({ window, L, console, setTimeout }) });
+    const window = deferredLoader ? {} : { L };
+    const module = new SourceTextModule(source, { context: createContext({ window, L, console,
+        document: { querySelector: () => ({}) },
+        setTimeout: deferredLoader ? callback => loader.push(callback) : setTimeout }) });
     await module.link(() => { throw new Error('Unexpected module dependency'); });
     await module.evaluate();
     const api = module.namespace;
@@ -118,7 +126,8 @@ async function createHarness() {
         return markers.at(-1);
     }
 
-    return { api, window, createMap, addMarker };
+    return { api, window, maps, createMap, addMarker,
+        finishLoader() { window.L = L; for (const callback of loader.splice(0)) callback(); } };
 }
 
 function fireMarkerEvents(marker) {
@@ -255,4 +264,103 @@ test('destroy deactivates callbacks before remove and clears storage if remove t
         assert.equal(Object.hasOwn(window[storage], 'map'), false);
     }
     assert.doesNotThrow(() => api.destroyMap('map'));
+});
+
+function reference(callback = () => Promise.resolve()) {
+    return { calls: 0, invokeMethodAsync() { this.calls++; return callback(); } };
+}
+function deferred() {
+    let resolve, reject;
+    const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+    return { promise, resolve, reject };
+}
+function assertCleared(window, id) {
+    for (const name of ['_leafletMaps', '_leafletLayers', '_leafletMarkers', '_leafletLayersControl'])
+        assert.equal(Object.hasOwn(window[name] ?? {}, id), false, name + ' retains failed/disposed map');
+}
+
+test('destroy cancels create even before an already-loaded loader continuation', async () => {
+    const { api, maps, window } = await createHarness();
+    const ref = reference();
+    const creating = api.createMap('map', '{}', ref);
+    api.destroyMap('map');
+    await creating;
+    assert.equal(maps.length, 0, 'L.map must not run after destroy');
+    assert.equal(ref.calls, 0);
+    assertCleared(window, 'map');
+});
+
+test('deferred loader creation is cancelled independently for each map', async () => {
+    const { api, maps, window, finishLoader } = await createHarness({ deferredLoader: true });
+    const old = reference(), live = reference();
+    const first = api.createMap('old', '{}', old);
+    const second = api.createMap('live', '{}', live);
+    api.destroyMap('old'); api.destroyMap('old');
+    finishLoader();
+    await Promise.all([first, second]);
+    assert.equal(old.calls, 0); assert.equal(live.calls, 1);
+    assert.deepEqual(maps.map(map => map.id), ['live']);
+    assertCleared(window, 'old');
+    api.destroyMap('live');
+    assert.equal(maps[0].removeCount, 1);
+});
+
+test('same-id pending replacement and old owner destroy preserve the newest generation', async () => {
+    const { api, maps, window, finishLoader } = await createHarness({ deferredLoader: true });
+    const old = reference(), latest = reference();
+    const first = api.createMap('map', '{}', old, 'old-owner');
+    const second = api.createMap('map', '{}', latest, 'new-owner');
+    finishLoader(); await Promise.all([first, second]);
+    assert.equal(old.calls, 0); assert.equal(latest.calls, 1); assert.equal(maps.length, 1);
+    api.destroyMap('map', 'old-owner');
+    assert.equal(window._leafletMaps.map, maps[0]); assert.equal(maps[0].removeCount, 0);
+    api.destroyMap('map', 'new-owner');
+    assert.equal(maps[0].removeCount, 1); assertCleared(window, 'map');
+});
+
+test('tile failure rolls back L.map before destroy storage is otherwise available', async () => {
+    const { api, maps, window } = await createHarness({ tileFailure: true });
+    const ref = reference();
+    await assert.rejects(api.createMap('map', '{}', ref), /tile failed/);
+    assert.equal(maps.length, 1); assert.equal(maps[0].removeCount, 1); assert.equal(ref.calls, 0);
+    assertCleared(window, 'map');
+    api.destroyMap('map'); assert.equal(maps[0].removeCount, 1);
+});
+
+for (const [controlFailure, options] of [['layers', { layersControl: {} }], ['scale', { scaleControl: {} }], ['add', { addMarkerControl: {} }]])
+    test(`${controlFailure} control failure rolls back map and callbacks`, async () => {
+        const { api, maps, window } = await createHarness({ controlFailure });
+        const ref = reference();
+        await assert.rejects(api.createMap('map', JSON.stringify(options), ref), /control failed/);
+        assert.equal(maps[0].removeCount, 1); assert.equal(ref.calls, 0); assertCleared(window, 'map');
+        api.destroyMap('map'); assert.equal(maps[0].removeCount, 1);
+    });
+
+test('creation observes callback completion and rolls back a rejected callback', async () => {
+    const { api, maps, window } = await createHarness();
+    const entered = deferred(), completion = deferred();
+    completion.promise.catch(() => {}); // The regression must not itself introduce an unhandled rejection.
+    const ref = reference(() => { entered.resolve(); return completion.promise; });
+    let settled = false;
+    const creating = api.createMap('map', '{}', ref).finally(() => { settled = true; });
+    await entered.promise;
+    assert.equal(settled, false, 'create must await the callback promise');
+    completion.reject(new Error('observer failed'));
+    await assert.rejects(creating, /observer failed/);
+    assert.equal(maps[0].removeCount, 1); assertCleared(window, 'map');
+});
+
+test('late old callback failure cannot delete replacement storage or remove replacement map', async () => {
+    const { api, maps, window } = await createHarness();
+    const entered = deferred(), completion = deferred();
+    completion.promise.catch(() => {});
+    const creating = api.createMap('map', '{}', reference(() => { entered.resolve(); return completion.promise; }), 'old');
+    await entered.promise;
+    api.destroyMap('map', 'old');
+    await api.createMap('map', '{}', reference(), 'new');
+    completion.reject(new Error('late observer failed'));
+    await assert.rejects(creating, /late observer failed/);
+    assert.equal(window._leafletMaps.map, maps[1]);
+    assert.equal(maps[0].removeCount, 1); assert.equal(maps[1].removeCount, 0);
+    api.destroyMap('map', 'new');
 });

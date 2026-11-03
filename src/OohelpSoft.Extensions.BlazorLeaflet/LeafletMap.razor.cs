@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
+using System.Runtime.ExceptionServices;
 using OohelpSoft.BlazorLeaflet.Base;
 using OohelpSoft.BlazorLeaflet.Base.Interfaces;
 using OohelpSoft.BlazorLeaflet.Base.Types;
@@ -12,7 +13,13 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
     [Inject]
     private IJSRuntime JSRuntime { get; set; } = null!;
     private IJSObjectReference? leafletInterop;
-    private TaskCompletionSource<bool>? _mapReadyTcs;
+    private readonly TaskCompletionSource<bool> _mapReadyTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly string _creationKey = Guid.NewGuid().ToString("N");
+    private Task<Exception?>? _mapCreatedTask;
+    private Task? _disposeTask;
+    private Exception? _initializationFailure;
+    private bool _initializationStarted;
+    private bool _mapCreatedNotified;
     private readonly Dictionary<string, MarkerGroupLayer> _layers = new(StringComparer.OrdinalIgnoreCase);
     private DotNetObjectReference<LeafletMap>? _dotNetRef;
     private bool _disposed;
@@ -22,53 +29,86 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
     public bool TryGetLayer(string layerId, out MarkerGroupLayer? layer) => _layers!.TryGetValue(layerId, out layer);
 
 
-    protected override void OnInitialized()
-    {
-        // инициализируем TCS
-        _mapReadyTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    }
-    // Метод, который вызывается после успешного создания карты (OnAfterRender или callback)
-    private void NotifyMapCreated()
-    {
-        _mapReadyTcs?.TrySetResult(true);
-    }
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
-
-        if (leafletInterop == null)
+        if (!firstRender || _disposed || _initializationStarted) return;
+        _initializationStarted = true;
+        try
         {
-            leafletInterop = await JSRuntime.InvokeAsync<IJSObjectReference>(
+            var module = await JSRuntime.InvokeAsync<IJSObjectReference>(
                 "import", "./_content/OohelpSoft.Extensions.BlazorLeaflet/js/leafletInterop.js");
-            
+            if (_disposed)
+            {
+                await module.DisposeAsync();
+                return;
+            }
+            leafletInterop = module;
             _dotNetRef = DotNetObjectReference.Create(this);
-            await leafletInterop.InvokeVoidAsync("createMap", this.Id, JsInteropJson.Serialize(Options), _dotNetRef);
+            Exception? createFailure = null;
+            try
+            {
+                var created = await module.InvokeAsync<bool>("createMap", Id, JsInteropJson.Serialize(Options), _dotNetRef, _creationKey);
+                if (!created && !_disposed) throw new InvalidOperationException("Map creation was superseded.");
+            }
+            catch (Exception error)
+            {
+                if (!_disposed || !IsExpectedDisposal(error))
+                {
+                    createFailure = _initializationFailure = error;
+                    _mapReadyTcs.TrySetException(error);
+                }
+            }
+
+            var observerFailure = _mapCreatedTask is null ? null : await _mapCreatedTask;
+            if (_disposed && observerFailure is not null && IsExpectedDisposal(observerFailure)) observerFailure = null;
+            if (createFailure is not null && observerFailure is not null)
+                throw new AggregateException(createFailure, observerFailure);
+            if (createFailure is not null) ExceptionDispatchInfo.Capture(createFailure).Throw();
+            if (observerFailure is not null) ExceptionDispatchInfo.Capture(observerFailure).Throw();
+        }
+        catch (Exception error) when (_disposed && IsExpectedDisposal(error)) { }
+        catch (Exception error)
+        {
+            _initializationFailure = error;
+            _mapReadyTcs.TrySetException(error);
+            try { await DisposeAsync(); }
+            catch (Exception cleanupError) { throw new AggregateException(error, cleanupError); }
+            throw;
         }
     }
     public Task EnsureMapReadyAsync(CancellationToken ct = default)
     {
-        _mapReadyTcs ??= new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (ct == default) return _mapReadyTcs.Task;
-        // поддержка отмены
-        return _mapReadyTcs.Task.WaitAsync(ct);
+        if (_initializationFailure is not null) return Task.FromException(_initializationFailure);
+        if (_disposed) return Task.FromCanceled(new CancellationToken(true));
+        return ct == default ? _mapReadyTcs.Task : _mapReadyTcs.Task.WaitAsync(ct);
     }
 
     [JSInvokable]
     public void OnJsMapCreated()
     {
-        NotifyMapCreated();
-        _ = MapCreated.InvokeAsync(null);
+        if (_disposed || _initializationFailure is not null || leafletInterop is null || _mapCreatedNotified) return;
+        _mapCreatedNotified = true;
+        // Readiness means the JS map exists; handlers may themselves await EnsureMapReadyAsync.
+        _mapReadyTcs.TrySetResult(true);
+        _mapCreatedTask = InvokeMapCreatedAsync();
+    }
+
+    private async Task<Exception?> InvokeMapCreatedAsync()
+    {
+        try { await MapCreated.InvokeAsync(null); return null; }
+        // Capture immediately, including on disposal/early failure; initialization awaits and reports this result.
+        catch (Exception error) { return error; }
     }
 
     [JSInvokable]
-    public Task OnMapPointClicked(double latitude, double longitude) => OnAddPointRequest.InvokeAsync(new Location(latitude, longitude));
+    public Task OnMapPointClicked(double latitude, double longitude) => _disposed ? Task.CompletedTask : OnAddPointRequest.InvokeAsync(new Location(latitude, longitude));
 
     [JSInvokable]
-    public Task OnJSMarkerClick(string id) => OnMarkerClick.InvokeAsync(id);
+    public Task OnJSMarkerClick(string id) => _disposed ? Task.CompletedTask : OnMarkerClick.InvokeAsync(id);
 
     [JSInvokable]
     public Task OnJSMarkerDraged(string id, double latitude, double longitude) =>
-        OnMarkerDragged.InvokeAsync(new Events.MarkerDragEvent(id, new Location(latitude, longitude)));
+        _disposed ? Task.CompletedTask : OnMarkerDragged.InvokeAsync(new Events.MarkerDragEvent(id, new Location(latitude, longitude)));
 
 
     public async Task RegisterMarkerClickCallback()
@@ -101,48 +141,40 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
         );
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => new(_disposeTask ??= DisposeCoreAsync());
+
+    private static bool IsExpectedDisposal(Exception error) => error is JSDisconnectedException or ObjectDisposedException or OperationCanceledException;
+
+    private async Task DisposeCoreAsync()
     {
-        if (_disposed)
-            return;
-
         _disposed = true;
-
+        _mapReadyTcs.TrySetCanceled();
+        Exception? failure = null;
         try
         {
             if (leafletInterop is not null)
             {
                 try
                 {
-                    await leafletInterop.InvokeVoidAsync("destroyMap", this.Id);
+                    await leafletInterop.InvokeVoidAsync("destroyMap", Id, _creationKey);
                 }
-                catch (JSDisconnectedException)
-                {
-                    // normal during refresh/navigation
-                }
-                catch (ObjectDisposedException)
-                {
-                    // also safe to ignore
-                }
+                catch (Exception error) when (IsExpectedDisposal(error)) { }
+                catch (Exception error) { failure = error; }
 
                 try
                 {
                     await leafletInterop.DisposeAsync();
                 }
-                catch
-                {
-                    // ignore
-                }
-               
+                catch (Exception error) when (IsExpectedDisposal(error)) { }
+                catch (Exception error) { failure = failure is null ? error : new AggregateException(failure, error); }
             }
         }
         finally
         {
             _dotNetRef?.Dispose();
-
+            _dotNetRef = null;
             _layers.Clear();
-
-            _mapReadyTcs = null;
         }
+        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
     }
 }
