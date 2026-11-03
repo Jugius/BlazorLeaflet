@@ -21,7 +21,7 @@ public abstract class MarkerGroupLayer : Layer
     [JsonPropertyName("layerType")]
     public abstract string LayerType { get; }
 
-    [JsonPropertyName("initiallyVisible")]
+    [JsonPropertyName("isVisible")]
     public bool IsVisible { get; init; } = true;
     public MarkerGroupLayer(string layerId)
     {

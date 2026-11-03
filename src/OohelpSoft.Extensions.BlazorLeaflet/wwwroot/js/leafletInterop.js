@@ -159,7 +159,7 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
         }
     }
 
-    if (l.initiallyVisible !== false) layer.addTo(map);
+    if (l.isVisible !== false) layer.addTo(map);
 
     const layersControl = window._leafletLayersControl[mapId];
 
