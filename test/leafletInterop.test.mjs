@@ -40,7 +40,9 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
                 id, markers: [], controls: [], container: { style: {} }, removeCount: 0,
                 getContainer() { return this.container; },
                 remove() { this.removeCount++; },
-                removeLayer(layer) { this.removedLayer = layer; }
+                layers: new Set(),
+                hasLayer(layer) { return this.layers.has(layer); },
+                removeLayer(layer) { this.layers.delete(layer); this.removedLayer = layer; }
             });
             maps.push(map);
             return map;
@@ -65,9 +67,10 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
                 addLayer(marker) { this.markers.push(marker); },
                 clearLayers() { this.markers.length = 0; },
                 off() { this.detached = true; },
-                addTo() {}
+                addTo(map) { map.layers.add(this); }
             };
         },
+        markerClusterGroup() { return this.layerGroup(); },
         control: {
             layers() { return { removed: [], addTo() { if (controlFailure === 'layers') throw new Error('control failed'); }, addOverlay() {}, removeLayer(layer) { this.removed.push(layer); } }; },
             scale() { return { addTo() { if (controlFailure === 'scale') throw new Error('control failed'); } }; }
@@ -432,4 +435,55 @@ test('old cluster focus callback cannot open a removed or replacement group popu
     await addMarker('first', 'initial-group');
     assert.doesNotThrow(() => deferred(), 'Old callback must not access map flyTo or old popup');
     assert.notEqual(window._leafletMarkers.first['same-layer']['same-marker'], marker);
+});
+
+test('visibility toggles reuse initially hidden group, markers and control registration', async () => {
+    const { api, window, createMap } = await createHarness();
+    await createMap('map', { layersControl: {} });
+    await api.addMarkerGroupLayer('map', JSON.stringify({
+        id: 'hidden', initiallyVisible: false, markers: [{ id: 'poi', location: [50, 30] }]
+    }));
+    const map = window._leafletMaps.map;
+    const group = window._leafletLayers.map.hidden;
+    const marker = window._leafletMarkers.map.hidden.poi;
+    assert.equal(map.hasLayer(group), false);
+    api.setMarkerGroupLayerVisibility('map', 'hidden', true);
+    assert.equal(map.hasLayer(group), true);
+    api.setMarkerGroupLayerVisibility('map', 'hidden', false);
+    api.setMarkerGroupLayerVisibility('map', 'hidden', false);
+    assert.equal(map.hasLayer(group), false);
+    assert.equal(window._leafletLayers.map.hidden, group);
+    assert.equal(window._leafletMarkers.map.hidden.poi, marker);
+    assert.equal(group.markers.length, 1);
+    assert.equal(window._leafletLayersControl.map.removed.length, 0);
+    api.setMarkerGroupLayerVisibility('map', 'hidden', true);
+    assert.equal(map.hasLayer(group), true);
+});
+
+test('initially hidden cluster defers refresh and ignores focus while accepting icon updates', async () => {
+    const { api, window, createMap } = await createHarness();
+    await createMap('map');
+    await api.addMarkerGroupLayer('map', JSON.stringify({
+        id: 'cluster', layerType: 'MarkerClusterLayer', initiallyVisible: false,
+        markers: [{ id: 'poi', location: [50, 30] }]
+    }));
+    const group = window._leafletLayers.map.cluster;
+    const marker = window._leafletMarkers.map.cluster.poi;
+    let zooms = 0;
+    let refreshes = 0;
+    group.zoomToShowLayer = () => { zooms++; };
+    group.refreshClusters = () => { refreshes++; };
+    api.focusMarker('map', 'cluster', 'poi');
+    api.updateMarkerIcon('map', 'cluster', 'poi', JSON.stringify({ iconUrl: 'single' }));
+    assert.equal(marker.icon.iconUrl, 'single');
+    api.updateMarkersIconsBulk('map', 'cluster', JSON.stringify([{ id: 'poi', icon: { iconUrl: 'bulk' } }]));
+    assert.equal(marker.icon.iconUrl, 'bulk');
+    assert.deepEqual([zooms, refreshes], [0, 0]);
+
+    api.setMarkerGroupLayerVisibility('map', 'cluster', true);
+    api.focusMarker('map', 'cluster', 'poi');
+    api.updateMarkerIcon('map', 'cluster', 'poi', JSON.stringify({ iconUrl: 'visible' }));
+    api.updateMarkersIconsBulk('map', 'cluster', JSON.stringify([{ id: 'poi', icon: { iconUrl: 'latest' } }]));
+    assert.deepEqual([zooms, refreshes], [1, 2]);
+    assert.equal(marker.icon.iconUrl, 'latest');
 });

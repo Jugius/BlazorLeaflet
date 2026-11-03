@@ -159,7 +159,7 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
         }
     }
 
-    layer.addTo(map);
+    if (l.initiallyVisible !== false) layer.addTo(map);
 
     const layersControl = window._leafletLayersControl[mapId];
 
@@ -169,6 +169,14 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
 
     
 }
+export function setMarkerGroupLayerVisibility(mapId, layerId, isVisible) {
+    const map = window._leafletMaps?.[mapId];
+    const layer = window._leafletLayers?.[mapId]?.[layerId];
+    if (!map || !layer || map.hasLayer(layer) === isVisible) return;
+    if (isVisible) layer.addTo(map);
+    else map.removeLayer(layer);
+}
+
 export function removeMarkerGroupLayer(mapId, layerId) {
     const layer = window._leafletLayers?.[mapId]?.[layerId];
     if (!layer) return;
@@ -260,7 +268,7 @@ export function updateMarkerIcon(mapId, layerId, markerId, iconJson) {
     marker.setIcon(newIcon);
 
     const layer = window._leafletLayers?.[mapId]?.[layerId];
-    if (layer && layer.refreshClusters) {
+    if (layer?.refreshClusters && window._leafletMaps?.[mapId]?.hasLayer(layer)) {
         layer.refreshClusters();
     }
 }
@@ -279,7 +287,7 @@ export function updateMarkersIconsBulk(mapId, layerId, iconUpdatesJson) {
     }
 
     const layer = window._leafletLayers?.[mapId]?.[layerId];
-    if (layer && layer.refreshClusters) {
+    if (layer?.refreshClusters && window._leafletMaps?.[mapId]?.hasLayer(layer)) {
         layer.refreshClusters();
     }
 }
@@ -293,9 +301,10 @@ export function focusMarker(mapId, layerId, markerId) {
         console.warn("focusMarker: not found", { mapId, layerId, markerId });
         return;
     }
+    if (!map.hasLayer(layer)) return;
 
     const openAndHighlight = () => {
-        if (window._leafletLayers?.[mapId]?.[layerId] !== layer ||
+        if (!map.hasLayer(layer) || window._leafletLayers?.[mapId]?.[layerId] !== layer ||
             window._leafletMarkers?.[mapId]?.[layerId]?.[markerId] !== marker) return;
         // центрирование (плавное)
         map.flyTo(marker.getLatLng(), map.getZoom(), {
@@ -309,7 +318,7 @@ export function focusMarker(mapId, layerId, markerId) {
 
         // подсветка
         setTimeout(() => {
-            if (window._leafletLayers?.[mapId]?.[layerId] !== layer ||
+            if (!map.hasLayer(layer) || window._leafletLayers?.[mapId]?.[layerId] !== layer ||
                 window._leafletMarkers?.[mapId]?.[layerId]?.[markerId] !== marker) return;
             highlightMarker(marker);
         }, 300);

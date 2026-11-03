@@ -20,6 +20,9 @@ public abstract class MarkerGroupLayer : Layer
 
     [JsonPropertyName("layerType")]
     public abstract string LayerType { get; }
+
+    [JsonPropertyName("initiallyVisible")]
+    public bool IsVisible { get; init; } = true;
     public MarkerGroupLayer(string layerId)
     {
         this.Id = layerId;

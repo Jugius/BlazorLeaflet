@@ -148,6 +148,12 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
         if (_layers.Remove(layerId, out var layer)) layer.Detach();
     }
 
+    public async Task SetMarkerGroupLayerVisibilityAsync(string layerId, bool isVisible)
+    {
+        await EnsureMapReadyAsync();
+        await leafletInterop!.InvokeVoidAsync("setMarkerGroupLayerVisibility", Id, layerId, isVisible);
+    }
+
     public ValueTask DisposeAsync() => new(_disposeTask ??= DisposeCoreAsync());
 
     private static bool IsExpectedDisposal(Exception error) => error is JSDisconnectedException or ObjectDisposedException or OperationCanceledException;
