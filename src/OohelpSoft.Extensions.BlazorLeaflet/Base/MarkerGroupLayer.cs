@@ -37,6 +37,11 @@ public abstract class MarkerGroupLayer : Layer
         await this._map.Interop.InvokeVoidAsync("addMarkerGroupLayer", this._map.Id, layerJson);
     }
     public bool HasMarker(string id) => _markers.ContainsKey(id);
+    internal void Detach()
+    {
+        _map = null;
+        _markers.Clear();
+    }
     public async Task AddMarkersAsync(IEnumerable<MarkerLayer> markers)
     {        
         if (_map != null)

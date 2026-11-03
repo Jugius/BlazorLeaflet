@@ -141,6 +141,13 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
         );
     }
 
+    public async Task RemoveMarkerGroupLayerAsync(string layerId)
+    {
+        await EnsureMapReadyAsync();
+        await leafletInterop!.InvokeVoidAsync("removeMarkerGroupLayer", Id, layerId);
+        if (_layers.Remove(layerId, out var layer)) layer.Detach();
+    }
+
     public ValueTask DisposeAsync() => new(_disposeTask ??= DisposeCoreAsync());
 
     private static bool IsExpectedDisposal(Exception error) => error is JSDisconnectedException or ObjectDisposedException or OperationCanceledException;

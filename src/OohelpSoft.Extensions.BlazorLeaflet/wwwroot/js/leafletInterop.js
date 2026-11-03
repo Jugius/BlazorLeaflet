@@ -145,13 +145,15 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
 
     const layerId = l.id;
 
+    if (window._leafletLayers[mapId][layerId]) removeMarkerGroupLayer(mapId, layerId);
+
     window._leafletLayers[mapId][layerId] = layer;
     window._leafletMarkers[mapId][layerId] = {};
 
     if (l.markers?.length > 0) {
         const markersDict = window._leafletMarkers[mapId][layerId];
         for (const m of l.markers) {
-            const marker = createMarkerInternal(m, context);
+            const marker = createMarkerInternal(m, context, () => window._leafletLayers?.[mapId]?.[layerId] === layer);
             layer.addLayer(marker);
             markersDict[m.id] = marker;
         }
@@ -166,6 +168,24 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
     }
 
     
+}
+export function removeMarkerGroupLayer(mapId, layerId) {
+    const layer = window._leafletLayers?.[mapId]?.[layerId];
+    if (!layer) return;
+    const markers = window._leafletMarkers?.[mapId]?.[layerId] ?? {};
+    // Invalidate identity before removing children; retained callbacks must stay inert on re-add.
+    delete window._leafletLayers[mapId][layerId];
+    delete window._leafletMarkers[mapId][layerId];
+    for (const marker of Object.values(markers)) {
+        marker.off();
+        marker.getPopup?.()?.off();
+        marker.closePopup?.();
+        marker.unbindPopup?.();
+    }
+    layer.off?.();
+    window._leafletLayersControl?.[mapId]?.removeLayer(layer);
+    window._leafletMaps?.[mapId]?.removeLayer(layer);
+    layer.clearLayers();
 }
 export function clearLayer(mapId, layerId) {
     const layer = window._leafletLayers?.[mapId]?.[layerId];
@@ -190,7 +210,7 @@ export async function addMarkersToLayerAsync(mapId, layerName, markersJson) {
     const items = JSON.parse(markersJson);
 
     for (const m of items) {
-        const marker = createMarkerInternal(m, context);
+        const marker = createMarkerInternal(m, context, () => window._leafletLayers?.[mapId]?.[layerName] === layer && markersDict[m.id] === marker);
         layer.addLayer(marker);
         markersDict[m.id] = marker;
     }
@@ -275,6 +295,8 @@ export function focusMarker(mapId, layerId, markerId) {
     }
 
     const openAndHighlight = () => {
+        if (window._leafletLayers?.[mapId]?.[layerId] !== layer ||
+            window._leafletMarkers?.[mapId]?.[layerId]?.[markerId] !== marker) return;
         // центрирование (плавное)
         map.flyTo(marker.getLatLng(), map.getZoom(), {
             duration: 0.5
@@ -287,6 +309,8 @@ export function focusMarker(mapId, layerId, markerId) {
 
         // подсветка
         setTimeout(() => {
+            if (window._leafletLayers?.[mapId]?.[layerId] !== layer ||
+                window._leafletMarkers?.[mapId]?.[layerId]?.[markerId] !== marker) return;
             highlightMarker(marker);
         }, 300);
     };
@@ -307,7 +331,7 @@ function highlightMarker(marker) {
     el.classList.add("marker-highlight");
 }
 
-function createMarkerInternal(m, context) {
+function createMarkerInternal(m, context, isOwned = () => true) {
     let markerOptions = {};
 
     if (m.icon) {
@@ -319,12 +343,14 @@ function createMarkerInternal(m, context) {
     }
 
     const marker = L.marker(m.location, markerOptions);
+    marker._isPresenterActive = () => context.active && isOwned();
 
     if (m.popup) {
 
         const popup = L.popup(m.popup.options).setContent(m.popup.html);
         popup.on('add', () => {
             // обращаемся к DOM popUp контейнеру
+            if (!marker._isPresenterActive()) return;
             const popupElement = popup.getElement();
             window.updatePopupAfterImagesLoad(popupElement, marker);
         });
@@ -332,13 +358,13 @@ function createMarkerInternal(m, context) {
     }
 
     marker.on('click', function (e) {
-        if (context.active && context.markerClickRegistered && context.dotNetObjRef) {
+        if (marker._isPresenterActive() && context.markerClickRegistered && context.dotNetObjRef) {
             context.dotNetObjRef.invokeMethodAsync("OnJSMarkerClick", m.id);
         }
     });
 
     marker.on('dragend', function () {
-        if (context.active && context.markerDragEndRegistered && context.dotNetObjRef) {
+        if (marker._isPresenterActive() && context.markerDragEndRegistered && context.dotNetObjRef) {
             const position = marker.getLatLng();
 
             context.dotNetObjRef.invokeMethodAsync(
@@ -494,11 +520,11 @@ window.updatePopupAfterImagesLoad = function (popupElement, marker) {
     images.forEach(img => {
         if (img.complete) {
             // уже загружено → можно сразу обновить
-            marker.getPopup().update();
+            if (marker._isPresenterActive?.() !== false) marker.getPopup()?.update();
         } else {
             // слушаем загрузку
             img.addEventListener("load", () => {
-                marker.getPopup().update();
+                if (marker._isPresenterActive?.() !== false) marker.getPopup()?.update();
             });
         }
     });

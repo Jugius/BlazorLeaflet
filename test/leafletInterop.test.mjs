@@ -23,7 +23,7 @@ function eventSource(properties = {}) {
             };
             return this.on(name, once);
         },
-        off(name) { this.handlers.delete(name); },
+        off(name) { if (name === undefined) this.handlers.clear(); else this.handlers.delete(name); },
         fire(name, event = {}) {
             for (const handler of [...(this.handlers.get(name) ?? [])]) handler(event);
         }
@@ -39,7 +39,8 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
             const map = eventSource({
                 id, markers: [], controls: [], container: { style: {} }, removeCount: 0,
                 getContainer() { return this.container; },
-                remove() { this.removeCount++; }
+                remove() { this.removeCount++; },
+                removeLayer(layer) { this.removedLayer = layer; }
             });
             maps.push(map);
             return map;
@@ -48,7 +49,12 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
         marker(location) {
             const marker = eventSource({
                 getLatLng() { return { lat: location[0], lng: location[1] }; },
-                addTo(map) { map.markers.push(this); return this; }
+                addTo(map) { map.markers.push(this); return this; },
+                bindPopup(popup) { this.popup = popup; return this; },
+                getPopup() { return this.popup; },
+                unbindPopup() { this.popup = null; },
+                closePopup() {},
+                setIcon(icon) { this.icon = icon; }
             });
             markers.push(marker);
             return marker;
@@ -57,13 +63,17 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
             return {
                 markers: [],
                 addLayer(marker) { this.markers.push(marker); },
+                clearLayers() { this.markers.length = 0; },
+                off() { this.detached = true; },
                 addTo() {}
             };
         },
         control: {
-            layers() { return { addTo() { if (controlFailure === 'layers') throw new Error('control failed'); }, addOverlay() {} }; },
+            layers() { return { removed: [], addTo() { if (controlFailure === 'layers') throw new Error('control failed'); }, addOverlay() {}, removeLayer(layer) { this.removed.push(layer); } }; },
             scale() { return { addTo() { if (controlFailure === 'scale') throw new Error('control failed'); } }; }
         },
+        popup() { return eventSource({ setContent() { return this; }, getElement() { return { querySelectorAll() { return []; } }; }, update() { this.updates = (this.updates ?? 0) + 1; } }); },
+        icon(options) { return options; },
         Control: {
             extend(definition) {
                 return class {
@@ -363,4 +373,63 @@ test('late old callback failure cannot delete replacement storage or remove repl
     assert.equal(window._leafletMaps.map, maps[1]);
     assert.equal(maps[0].removeCount, 1); assert.equal(maps[1].removeCount, 0);
     api.destroyMap('map', 'new');
+});
+
+test('remove group cleans registries, controls, listeners and children; same-ID readd is independent', async () => {
+    const { api, window, createMap, addMarker } = await createHarness();
+    const first = await createMap('first', { layersControl: {} });
+    const other = await createMap('other');
+    api.registerMarkerClickCallback('first');
+    api.registerMarkerDragEndCallback('first');
+    const old = await addMarker('first', 'initial-group');
+    await addMarker('other', 'initial-group');
+    const group = window._leafletLayers.first['same-layer'];
+    api.removeMarkerGroupLayer('first', 'same-layer');
+    assert.equal(group.markers.length, 0);
+    assert.equal(group.detached, true);
+    assert.equal(window._leafletMaps.first.removedLayer, group);
+    assert.equal(window._leafletLayersControl.first.removed[0], group);
+    assert.equal(window._leafletLayers.first['same-layer'], undefined);
+    assert.equal(window._leafletMarkers.first['same-layer'], undefined);
+    api.removeMarkerGroupLayer('first', 'same-layer');
+    api.removeMarkerGroupLayer('missing', 'same-layer');
+    fireMarkerEvents(old);
+    assert.deepEqual(first.calls, []);
+    const replacement = await addMarker('first', 'initial-group');
+    fireMarkerEvents(old); fireMarkerEvents(replacement);
+    assert.deepEqual(first.calls, markerCalls);
+    assert.ok(window._leafletMarkers.other['same-layer']['same-marker']);
+    assert.deepEqual(other.calls, []);
+});
+
+test('deferred popup image callback is inert after removing and readding its group', async () => {
+    const { api, window, createMap } = await createHarness();
+    await createMap('first');
+    await api.addMarkerGroupLayer('first', JSON.stringify({ id: 'group', markers: [
+        { id: 'poi', location: [50, 30], popup: { html: '', options: {} } }
+    ] }));
+    const marker = window._leafletMarkers.first.group.poi;
+    const popup = marker.getPopup();
+    let loaded;
+    window.updatePopupAfterImagesLoad({ querySelectorAll: () => [{ complete: false, addEventListener: (_, callback) => loaded = callback }] }, marker);
+    api.removeMarkerGroupLayer('first', 'group');
+    await api.addMarkerGroupLayer('first', JSON.stringify({ id: 'group', markers: [] }));
+    loaded();
+    assert.equal(popup.updates, undefined);
+    assert.equal(marker.getPopup(), null);
+    assert.equal(popup.handlers.size, 0);
+});
+
+test('old cluster focus callback cannot open a removed or replacement group popup', async () => {
+    const { api, window, createMap, addMarker } = await createHarness();
+    await createMap('first');
+    const marker = await addMarker('first', 'initial-group');
+    const group = window._leafletLayers.first['same-layer'];
+    let deferred;
+    group.zoomToShowLayer = (_, callback) => deferred = callback;
+    api.focusMarker('first', 'same-layer', 'same-marker');
+    api.removeMarkerGroupLayer('first', 'same-layer');
+    await addMarker('first', 'initial-group');
+    assert.doesNotThrow(() => deferred(), 'Old callback must not access map flyTo or old popup');
+    assert.notEqual(window._leafletMarkers.first['same-layer']['same-marker'], marker);
 });
