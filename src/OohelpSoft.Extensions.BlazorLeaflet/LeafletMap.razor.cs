@@ -1,11 +1,12 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
-using System.Runtime.ExceptionServices;
 using OohelpSoft.BlazorLeaflet.Base;
 using OohelpSoft.BlazorLeaflet.Base.Interfaces;
 using OohelpSoft.BlazorLeaflet.Base.Types;
+using OohelpSoft.BlazorLeaflet.Layers;
 using OohelpSoft.BlazorLeaflet.Layers.UI;
 using OohelpSoft.BlazorLeaflet.Utiles;
+using System.Runtime.ExceptionServices;
 
 namespace OohelpSoft.BlazorLeaflet;
 public sealed partial class LeafletMap : IMap, IAsyncDisposable
@@ -21,11 +22,15 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
     private bool _initializationStarted;
     private bool _mapCreatedNotified;
     private readonly Dictionary<string, MarkerGroupLayer> _layers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PolylineGroupLayer> _polylineLayers = new(StringComparer.OrdinalIgnoreCase);
     private DotNetObjectReference<LeafletMap>? _dotNetRef;
     private bool _disposed;
+    private readonly SemaphoreSlim _layerOperations = new(1, 1);
 
+    internal string CreationKey => _creationKey;
     public IJSObjectReference Interop => this.leafletInterop!;    
-    public IEnumerable<MarkerGroupLayer> LayerGroups => _layers.Values;    
+    public IEnumerable<MarkerGroupLayer> LayerGroups => _layers.Values;
+    public IEnumerable<PolylineGroupLayer> PolylineLayerGroups => _polylineLayers.Values;
     public bool TryGetLayer(string layerId, out MarkerGroupLayer? layer) => _layers!.TryGetValue(layerId, out layer);
 
 
@@ -126,33 +131,112 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
     public async Task AddMarkerGroupLayerAsync(MarkerGroupLayer layerGroup)
     {
         await EnsureMapReadyAsync();
-
-        await layerGroup.AddTo(this);
-        _layers[layerGroup.Id] = layerGroup;        
+        await _layerOperations.WaitAsync();
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_polylineLayers.ContainsKey(layerGroup.Id)) throw new ArgumentException("A polyline group already uses this ID.");
+            await layerGroup.AddTo(this);
+            if (_disposed) { layerGroup.Detach(); throw new ObjectDisposedException(nameof(LeafletMap)); }
+            _layers[layerGroup.Id] = layerGroup;
+        }
+        finally { _layerOperations.Release(); }
     }
+
     public async Task FitBoundsToLayerGroupsAsync(params string[] layerGroupIds)
     {
         await EnsureMapReadyAsync();
-
-        await leafletInterop!.InvokeVoidAsync(
-            "fitBoundsToLayerGroups",
-            this.Id,
-            layerGroupIds
-        );
+        string[] ids;
+        await _layerOperations.WaitAsync();
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            ids = layerGroupIds.Select(CanonicalLayerId).ToArray();
+        }
+        finally { _layerOperations.Release(); }
+        await leafletInterop!.InvokeVoidAsync("fitBoundsToLayerGroups", Id, ids, _creationKey);
     }
+
+    private string CanonicalLayerId(string id) =>
+        _layers.TryGetValue(id, out var marker) ? marker.Id :
+        _polylineLayers.TryGetValue(id, out var polyline) ? polyline.Id : id;
 
     public async Task RemoveMarkerGroupLayerAsync(string layerId)
     {
         await EnsureMapReadyAsync();
-        await leafletInterop!.InvokeVoidAsync("removeMarkerGroupLayer", Id, layerId);
-        if (_layers.Remove(layerId, out var layer)) layer.Detach();
+        await _layerOperations.WaitAsync();
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _layers.TryGetValue(layerId, out var layer);
+            await leafletInterop!.InvokeVoidAsync("removeMarkerGroupLayer", Id, layer?.Id ?? layerId, _creationKey);
+            if (_layers.Remove(layerId)) layer!.Detach();
+        }
+        finally { _layerOperations.Release(); }
     }
 
     public async Task SetMarkerGroupLayerVisibilityAsync(string layerId, bool isVisible)
     {
         await EnsureMapReadyAsync();
-        await leafletInterop!.InvokeVoidAsync("setMarkerGroupLayerVisibility", Id, layerId, isVisible);
+        string id;
+        await _layerOperations.WaitAsync();
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            id = _layers.TryGetValue(layerId, out var layer) ? layer.Id : layerId;
+        }
+        finally { _layerOperations.Release(); }
+        await leafletInterop!.InvokeVoidAsync("setMarkerGroupLayerVisibility", Id, id, isVisible, _creationKey);
     }
+
+    public async Task AddPolylineGroupLayerAsync(PolylineGroupLayer layer)
+    {
+        ArgumentNullException.ThrowIfNull(layer);
+        await EnsureMapReadyAsync();
+        await _layerOperations.WaitAsync();
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_layers.ContainsKey(layer.Id) || _polylineLayers.ContainsKey(layer.Id))
+                throw new ArgumentException("A group already uses this ID.");
+            await layer.AddTo(this);
+            if (_disposed) { layer.Detach(); throw new ObjectDisposedException(nameof(LeafletMap)); }
+            _polylineLayers.Add(layer.Id, layer);
+        }
+        finally { _layerOperations.Release(); }
+    }
+
+    public async Task RemovePolylineGroupLayerAsync(string layerId)
+    {
+        await EnsureMapReadyAsync();
+        await _layerOperations.WaitAsync();
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_polylineLayers.TryGetValue(layerId, out var layer)) return;
+            await leafletInterop!.InvokeVoidAsync("removePolylineGroupLayer", Id, layer.Id, _creationKey);
+            _polylineLayers.Remove(layerId);
+            layer.Detach();
+        }
+        finally { _layerOperations.Release(); }
+    }
+
+    public async Task SetPolylineGroupLayerVisibilityAsync(string layerId, bool isVisible)
+    {
+        await EnsureMapReadyAsync();
+        string id;
+        await _layerOperations.WaitAsync();
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_polylineLayers.TryGetValue(layerId, out var layer)) return;
+            id = layer.Id;
+        }
+        finally { _layerOperations.Release(); }
+        await leafletInterop!.InvokeVoidAsync("setPolylineGroupLayerVisibility", Id, id, isVisible, _creationKey);
+    }
+
+    public bool TryGetPolylineLayer(string layerId, out PolylineGroupLayer? layer) => _polylineLayers.TryGetValue(layerId, out layer);
 
     public ValueTask DisposeAsync() => new(_disposeTask ??= DisposeCoreAsync());
 
@@ -161,6 +245,8 @@ public sealed partial class LeafletMap : IMap, IAsyncDisposable
     private async Task DisposeCoreAsync()
     {
         _disposed = true;
+        foreach (var layer in _polylineLayers.Values) layer.Detach();
+        _polylineLayers.Clear();
         _mapReadyTcs.TrySetCanceled();
         Exception? failure = null;
         try

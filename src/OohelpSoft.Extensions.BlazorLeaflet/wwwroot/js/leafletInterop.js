@@ -1,9 +1,10 @@
-﻿// ----------------------------
+// ----------------------------
 //  Global storages
 // ----------------------------
 window._leafletMaps = window._leafletMaps || {};
 window._leafletLayers = window._leafletLayers || {};     // mapId → { layerName → LayerGroup }
 window._leafletMarkers = window._leafletMarkers || {};    // mapId → { layerName → { id → marker } }
+window._leafletPolylines = window._leafletPolylines || {};
 
 const mapContexts = new Map();
 
@@ -90,8 +91,9 @@ export async function createMap(id, optionsJson, dotNetObjRef, creationKey) {
         const map = context.map = L.map(id, options);
         // Publish ownership before tiles/controls can fail, so rollback can always remove this map.
         window._leafletMaps[id] = map;
-        window._leafletLayers[id] = {};
+        window._leafletLayers[id] = Object.create(null);
         window._leafletMarkers[id] = {};
+        window._leafletPolylines[id] = Object.create(null);
         window._leafletLayersControl ??= {};
 
         if (!options.tileLayers || options.tileLayers.length === 0) {
@@ -141,11 +143,14 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
     if (!map || !context?.active) return;
 
     const l = JSON.parse(layerJson);
+    if (Object.keys(window._leafletPolylines[mapId] ?? {}).some(id => id.toLowerCase() === l.id.toLowerCase()))
+        throw new Error('A polyline group already uses this ID');
     const layer = createMarkerGroupLayerInternal(l);
 
     const layerId = l.id;
 
-    if (window._leafletLayers[mapId][layerId]) removeMarkerGroupLayer(mapId, layerId);
+    const previousId = Object.keys(window._leafletMarkers[mapId]).find(id => id.toLowerCase() === layerId.toLowerCase());
+    if (previousId !== undefined) removeMarkerGroupLayer(mapId, previousId);
 
     window._leafletLayers[mapId][layerId] = layer;
     window._leafletMarkers[mapId][layerId] = {};
@@ -169,7 +174,7 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
 
     
 }
-export function setMarkerGroupLayerVisibility(mapId, layerId, isVisible) {
+function setLayerGroupVisibility(mapId, layerId, isVisible) {
     const map = window._leafletMaps?.[mapId];
     const layer = window._leafletLayers?.[mapId]?.[layerId];
     if (!map || !layer || map.hasLayer(layer) === isVisible) return;
@@ -177,7 +182,21 @@ export function setMarkerGroupLayerVisibility(mapId, layerId, isVisible) {
     else map.removeLayer(layer);
 }
 
-export function removeMarkerGroupLayer(mapId, layerId) {
+export function setMarkerGroupLayerVisibility(mapId, layerId, isVisible, creationKey) {
+    if (creationKey !== undefined) requireMapContext(mapId, creationKey);
+    if (!Object.hasOwn(window._leafletMarkers?.[mapId] ?? {}, layerId)) return;
+    setLayerGroupVisibility(mapId, layerId, isVisible);
+}
+
+export function setPolylineGroupLayerVisibility(mapId, layerId, isVisible, creationKey) {
+    if (creationKey !== undefined) requireMapContext(mapId, creationKey);
+    if (!Object.hasOwn(window._leafletPolylines?.[mapId] ?? {}, layerId)) return;
+    setLayerGroupVisibility(mapId, layerId, isVisible);
+}
+
+export function removeMarkerGroupLayer(mapId, layerId, creationKey) {
+    if (creationKey !== undefined) requireMapContext(mapId, creationKey);
+    if (!Object.hasOwn(window._leafletMarkers?.[mapId] ?? {}, layerId)) return;
     const layer = window._leafletLayers?.[mapId]?.[layerId];
     if (!layer) return;
     const markers = window._leafletMarkers?.[mapId]?.[layerId] ?? {};
@@ -493,7 +512,8 @@ function createAddMarkerControl(map, controlOptions, context) {
 }
 
 
-export async function fitBoundsToLayerGroups(mapId, layerGroupIds) {
+export async function fitBoundsToLayerGroups(mapId, layerGroupIds, creationKey) {
+    if (creationKey !== undefined) requireMapContext(mapId, creationKey);
     const map = window._leafletMaps?.[mapId];
     if (!map) return;
 
@@ -539,6 +559,215 @@ window.updatePopupAfterImagesLoad = function (popupElement, marker) {
     });
 }
 
+// Layer operations share the map lifecycle and the common layer registry.
+function requireMapContext(mapId, creationKey) {
+    const context = mapContexts.get(mapId);
+    if (!context?.active || context.map !== window._leafletMaps?.[mapId] ||
+        (creationKey !== undefined && context.creationKey !== creationKey))
+        throw new Error('The map context is no longer active');
+    return context;
+}
+
+function polylineGroup(mapId, layerId, creationKey) {
+    const context = requireMapContext(mapId, creationKey);
+    const layer = window._leafletLayers?.[mapId]?.[layerId];
+    const polylines = window._leafletPolylines?.[mapId]?.[layerId];
+    if (!layer || !polylines) throw new Error('Polyline group was not found');
+    return { context, layer, polylines };
+}
+
+function validatePolylineId(id) {
+    if (typeof id !== 'string' || id.trim().length === 0) throw new Error('A polyline ID is required');
+}
+
+function validatePolylineLocations(locations) {
+    if (!Array.isArray(locations) || locations.length < 2 || locations.some(p =>
+        !Array.isArray(p) || p.length !== 2 || !p.every(Number.isFinite)))
+        throw new Error('A polyline requires at least two finite coordinates');
+}
+
+function polylineStyle(options) {
+    if (!options || typeof options !== 'object') throw new Error('Polyline options are required');
+    const style = {};
+    for (const key of ['color', 'weight', 'opacity', 'dashArray', 'lineCap', 'lineJoin']) {
+        if (options[key] != null) style[key] = options[key];
+    }
+    if (style.weight !== undefined && !Number.isInteger(style.weight)) throw new Error('Weight must be an integer');
+    if (style.opacity !== undefined && !Number.isFinite(style.opacity)) throw new Error('Opacity must be finite');
+    if (style.dashArray === '') style.dashArray = null;
+    return style;
+}
+
+function disposePolyline(polyline) {
+    polyline.off();
+    polyline.getPopup?.()?.off();
+    polyline.closePopup?.();
+    polyline.unbindPopup?.();
+}
+
+function createPolylineInternal(item) {
+    const polyline = L.polyline(item.locations, item.options == null ? {} : polylineStyle(item.options));
+    try {
+        if (item.popup) polyline.bindPopup(L.popup(item.popup.options).setContent(item.popup.html));
+        return polyline;
+    } catch (error) {
+        try { disposePolyline(polyline); }
+        catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Polyline creation and cleanup failed'); }
+        throw error;
+    }
+}
+
+function validatePolylineAdditions(items, polylines) {
+    if (!Array.isArray(items)) throw new Error('A polyline array is required');
+    const ids = new Set();
+    for (const item of items) {
+        validatePolylineId(item?.id);
+        validatePolylineLocations(item.locations);
+        if (item.options != null) polylineStyle(item.options);
+        if (Object.hasOwn(polylines, item.id) || ids.has(item.id)) throw new Error('Duplicate polyline ID');
+        ids.add(item.id);
+    }
+}
+
+function addPolylineItems(layer, polylines, items) {
+    validatePolylineAdditions(items, polylines);
+    const created = [];
+    try {
+        for (const item of items) {
+            const polyline = createPolylineInternal(item);
+            created.push([item.id, polyline]);
+            layer.addLayer(polyline);
+            polylines[item.id] = polyline;
+        }
+    } catch (error) {
+        const failures = [error];
+        for (const [id, polyline] of created) {
+            delete polylines[id];
+            try { layer.removeLayer(polyline); disposePolyline(polyline); }
+            catch (cleanupError) { failures.push(cleanupError); }
+        }
+        if (failures.length > 1) throw new AggregateError(failures, 'Polyline addition rollback failed');
+        throw error;
+    }
+}
+
+export function addPolylineGroupLayer(mapId, layerJson, creationKey) {
+    const context = requireMapContext(mapId, creationKey);
+    const item = JSON.parse(layerJson);
+    validatePolylineId(item.id);
+    if (Object.keys(window._leafletLayers[mapId]).some(id => id.toLowerCase() === item.id.toLowerCase()))
+        throw new Error('A group already uses this ID');
+    const items = item.polylines ?? [];
+    validatePolylineAdditions(items, Object.create(null));
+    const layer = L.featureGroup();
+    const polylines = Object.create(null);
+    try {
+        addPolylineItems(layer, polylines, items);
+        if (item.isVisible !== false) layer.addTo(context.map);
+        window._leafletLayersControl?.[mapId]?.addOverlay(layer, item.name ?? item.id);
+        window._leafletLayers[mapId][item.id] = layer;
+        window._leafletPolylines[mapId][item.id] = polylines;
+    } catch (error) {
+        try {
+            window._leafletLayersControl?.[mapId]?.removeLayer(layer);
+            context.map.removeLayer(layer);
+            for (const polyline of Object.values(polylines)) disposePolyline(polyline);
+            layer.clearLayers();
+            layer.off?.();
+        } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Polyline group rollback failed'); }
+        throw error;
+    }
+}
+
+export function addPolylinesToLayerAsync(mapId, layerId, itemsJson, creationKey) {
+    const { layer, polylines } = polylineGroup(mapId, layerId, creationKey);
+    addPolylineItems(layer, polylines, JSON.parse(itemsJson));
+}
+
+export function removePolylinesByIdsAsync(mapId, layerId, idsJson, creationKey) {
+    const { layer, polylines } = polylineGroup(mapId, layerId, creationKey);
+    const ids = JSON.parse(idsJson);
+    if (!Array.isArray(ids)) throw new Error('An ID array is required');
+    ids.forEach(validatePolylineId);
+    for (const id of ids) {
+        if (!Object.hasOwn(polylines, id)) continue;
+        const polyline = polylines[id];
+        layer.removeLayer(polyline);
+        disposePolyline(polyline);
+        delete polylines[id];
+    }
+}
+
+export function clearPolylinesLayer(mapId, layerId, creationKey) {
+    const { polylines } = polylineGroup(mapId, layerId, creationKey);
+    removePolylinesByIdsAsync(mapId, layerId, JSON.stringify(Object.keys(polylines)), creationKey);
+}
+
+export function updatePolylinesStylesBulk(mapId, layerId, updatesJson, creationKey) {
+    const { polylines } = polylineGroup(mapId, layerId, creationKey);
+    const updates = JSON.parse(updatesJson);
+    if (!Array.isArray(updates)) throw new Error('An update array is required');
+    const ids = new Set();
+    const changes = updates.map(update => {
+        validatePolylineId(update?.id);
+        if (!Object.hasOwn(polylines, update.id)) throw new Error('Polyline was not found');
+        if (ids.has(update.id)) throw new Error('Duplicate style update');
+        ids.add(update.id);
+        const polyline = polylines[update.id];
+        const style = polylineStyle(update.options);
+        const before = {};
+        for (const key of Object.keys(style)) before[key] = polyline.options[key];
+        return { polyline, style, before };
+    });
+    const applied = [];
+    try {
+        for (const change of changes) {
+            applied.push(change);
+            change.polyline.setStyle(change.style);
+        }
+    } catch (error) {
+        const failures = [error];
+        for (const change of applied.reverse()) {
+            try { change.polyline.setStyle(change.before); }
+            catch (rollbackError) { failures.push(rollbackError); }
+        }
+        if (failures.length > 1) throw new AggregateError(failures, 'Polyline style rollback failed');
+        throw error;
+    }
+}
+
+export function updatePolylineLocations(mapId, layerId, polylineId, locationsJson, creationKey) {
+    const { polylines } = polylineGroup(mapId, layerId, creationKey);
+    const locations = JSON.parse(locationsJson);
+    validatePolylineLocations(locations);
+    if (!Object.hasOwn(polylines, polylineId)) throw new Error('Polyline was not found');
+    const polyline = polylines[polylineId];
+    const previous = polyline.getLatLngs();
+    try { polyline.setLatLngs(locations); }
+    catch (error) {
+        try { polyline.setLatLngs(previous); }
+        catch (rollbackError) { throw new AggregateError([error, rollbackError], 'Polyline geometry rollback failed'); }
+        throw error;
+    }
+}
+
+export function focusPolyline(mapId, layerId, polylineId, creationKey) {
+    const { context, layer, polylines } = polylineGroup(mapId, layerId, creationKey);
+    if (!Object.hasOwn(polylines, polylineId)) throw new Error('Polyline was not found');
+    if (!context.map.hasLayer(layer)) return;
+    context.map.fitBounds(polylines[polylineId].getBounds(), { padding: [50, 50] });
+}
+
+export function removePolylineGroupLayer(mapId, layerId, creationKey) {
+    const { context, layer } = polylineGroup(mapId, layerId, creationKey);
+    clearPolylinesLayer(mapId, layerId, creationKey);
+    window._leafletLayersControl?.[mapId]?.removeLayer(layer);
+    context.map.removeLayer(layer);
+    layer.off?.();
+    delete window._leafletLayers[mapId][layerId];
+    delete window._leafletPolylines[mapId][layerId];
+}
+
 export function destroyMap(mapId, creationKey) {
     const context = mapContexts.get(mapId);
     if (!context || (creationKey !== undefined && context.creationKey !== creationKey)) return;
@@ -550,13 +779,24 @@ function releaseMap(mapId, context) {
     context.dotNetObjRef = null;
     const map = context.map;
     context.map = null;
+    const failures = [];
     // A late failure only owns this context, never a replacement with the same ID.
     if (mapContexts.get(mapId) === context) {
+        for (const polylines of Object.values(window._leafletPolylines[mapId] ?? {})) {
+            for (const polyline of Object.values(polylines)) {
+                try { disposePolyline(polyline); }
+                catch (error) { failures.push(error); }
+            }
+        }
         mapContexts.delete(mapId);
         delete window._leafletMaps[mapId];
         delete window._leafletLayers[mapId];
         delete window._leafletMarkers[mapId];
+        delete window._leafletPolylines[mapId];
         if (window._leafletLayersControl) delete window._leafletLayersControl[mapId];
     }
-    map?.remove();
+    try { map?.remove(); }
+    catch (error) { failures.push(error); }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'Map cleanup failed');
 }

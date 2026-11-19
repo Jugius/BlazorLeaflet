@@ -441,7 +441,7 @@ test('visibility toggles reuse initially hidden group, markers and control regis
     const { api, window, createMap } = await createHarness();
     await createMap('map', { layersControl: {} });
     await api.addMarkerGroupLayer('map', JSON.stringify({
-        id: 'hidden', initiallyVisible: false, markers: [{ id: 'poi', location: [50, 30] }]
+        id: 'hidden', isVisible: false, markers: [{ id: 'poi', location: [50, 30] }]
     }));
     const map = window._leafletMaps.map;
     const group = window._leafletLayers.map.hidden;
@@ -464,7 +464,7 @@ test('initially hidden cluster defers refresh and ignores focus while accepting 
     const { api, window, createMap } = await createHarness();
     await createMap('map');
     await api.addMarkerGroupLayer('map', JSON.stringify({
-        id: 'cluster', layerType: 'MarkerClusterLayer', initiallyVisible: false,
+        id: 'cluster', layerType: 'MarkerClusterLayer', isVisible: false,
         markers: [{ id: 'poi', location: [50, 30] }]
     }));
     const group = window._leafletLayers.map.cluster;
