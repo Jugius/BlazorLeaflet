@@ -11,6 +11,7 @@ public abstract class MarkerGroupLayer : Layer
 {
     protected IMap? _map;
     protected readonly Dictionary<string, MarkerLayer> _markers;
+    private string? _focusAttachmentKey;
 
     [JsonPropertyName("markers")]
     public IEnumerable<MarkerLayer> Markers => _markers.Values;
@@ -37,7 +38,9 @@ public abstract class MarkerGroupLayer : Layer
     {
         this._map = map;
         var layerJson = JsInteropJson.Serialize(this);
-        await this._map.Interop.InvokeVoidAsync("addMarkerGroupLayer", this._map.Id, layerJson);
+        var focusAttachmentKey = Guid.NewGuid().ToString("N");
+        await map.Interop.InvokeVoidAsync("addMarkerGroupLayer", map.Id, layerJson, focusAttachmentKey);
+        _focusAttachmentKey = focusAttachmentKey;
     }
     public bool HasMarker(string id) => _markers.ContainsKey(id);
     internal void Detach()
@@ -105,11 +108,30 @@ public abstract class MarkerGroupLayer : Layer
             await _map.Interop.InvokeVoidAsync("updateMarkersIconsBulk", _map.Id, this.Id, JsInteropJson.Serialize(iconUpdates));
         }
     }
-    public async Task FocusMarker(string markerId)
+    public Task FocusMarker(string markerId) => FocusMarker(markerId, null);
+
+    /// <summary>
+    /// With options, the final zoom is the starting zoom within the map's zoom limits.
+    /// A flight may change zoom temporarily.
+    /// An explicit mode does not expand clusters. A marker in a cluster group
+    /// can open its popup or be highlighted only while the plugin renders it.
+    /// </summary>
+    public async Task FocusMarker(string markerId, FocusOptions? options = null)
     {
-        if (_map != null)
+        if (_map is not { } map) return;
+
+        if (options is null)
         {
-            await _map.Interop.InvokeVoidAsync("focusMarker", _map.Id, this.Id, markerId);
+            await map.Interop.InvokeVoidAsync("focusMarker", map.Id, Id, markerId);
+            return;
         }
+
+        if (_focusAttachmentKey is not { } focusAttachmentKey || !_markers.TryGetValue(markerId, out var marker)) return;
+        var leafletMap = map as LeafletMap;
+        if (leafletMap is not null && (!leafletMap.TryGetLayer(Id, out var current) || !ReferenceEquals(current, this)))
+            return;
+
+        await map.Interop.InvokeVoidAsync("focusMarker", map.Id, Id, marker.Id, JsInteropJson.Serialize(options),
+            leafletMap?.CreationKey, focusAttachmentKey);
     }
 }

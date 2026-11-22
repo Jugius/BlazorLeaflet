@@ -153,23 +153,34 @@ public class PolylineGroupLayer : Layer
         finally { _operations.Release(); }
     }
 
-    public async Task FocusPolyline(string polylineId)
+    public Task FocusPolyline(string polylineId) => FocusPolyline(polylineId, null);
+
+    /// <summary>
+    /// Fits the whole line when options are omitted. With options, focuses the midpoint
+    /// by length, with the final zoom at the starting zoom within the map's zoom limits.
+    /// A flight may change zoom temporarily. Polyline highlighting is not supported.
+    /// </summary>
+    public async Task FocusPolyline(string polylineId, FocusOptions? options = null)
     {
         await _operations.WaitAsync();
         try
         {
             GetPolyline(polylineId);
-            await InvokeAsync("focusPolyline", polylineId);
+            await InvokeAsync("focusPolyline", [polylineId], options is null ? null : JsInteropJson.Serialize(options));
         }
         finally { _operations.Release(); }
     }
 
-    private async Task InvokeAsync(string method, params object[] arguments)
+    private Task InvokeAsync(string method, params object[] arguments) => InvokeAsync(method, arguments, null);
+
+    private async Task InvokeAsync(string method, object[] arguments, string? focusOptionsJson)
     {
         var map = _map;
         if (map is null) return;
         var generation = _generation;
-        await map.Interop.InvokeVoidAsync(method, new object?[] { map.Id, Id }.Concat(arguments).Append((map as LeafletMap)?.CreationKey).ToArray());
+        var interopArguments = new object?[] { map.Id, Id }.Concat(arguments).Append((map as LeafletMap)?.CreationKey);
+        if (focusOptionsJson is not null) interopArguments = interopArguments.Append(focusOptionsJson);
+        await map.Interop.InvokeVoidAsync(method, interopArguments.ToArray());
         EnsureGeneration(generation);
     }
 

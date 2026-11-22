@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { createContext, SourceTextModule } from 'node:vm';
+import { createContext, runInNewContext, SourceTextModule } from 'node:vm';
 
 const source = await readFile(new URL('../src/OohelpSoft.Extensions.BlazorLeaflet/wwwroot/js/leafletInterop.js', import.meta.url), 'utf8');
 
@@ -30,10 +30,11 @@ function eventSource(properties = {}) {
     };
 }
 
-async function createHarness({ deferredLoader = false, tileFailure = false, controlFailure = null } = {}) {
+async function createHarness({ deferredLoader = false, tileFailure = false, controlFailure = null, deferTimers = false } = {}) {
     const markers = [];
     const maps = [];
     const loader = [];
+    const timers = [];
     const L = {
         map(id) {
             const map = eventSource({
@@ -41,6 +42,13 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
                 getContainer() { return this.container; },
                 remove() { this.removeCount++; },
                 layers: new Set(),
+                options: { zoomSnap: 1 }, zoom: 13, navigation: [], pointInView: true,
+                getZoom() { return this.zoom; },
+                getMinZoom() { return 0; },
+                getMaxZoom() { return 18; },
+                getBounds() { return { contains: () => this.pointInView }; },
+                flyTo(point, zoom, options) { this.navigation.push(['flyTo', point, zoom, options]); },
+                panTo(point, options) { this.navigation.push(['panTo', point, options]); },
                 hasLayer(layer) { return this.layers.has(layer); },
                 removeLayer(layer) { this.layers.delete(layer); this.removedLayer = layer; }
             });
@@ -54,6 +62,7 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
                 addTo(map) { map.markers.push(this); return this; },
                 bindPopup(popup) { this.popup = popup; return this; },
                 getPopup() { return this.popup; },
+                openPopup() { this.popupOpened = (this.popupOpened ?? 0) + 1; },
                 unbindPopup() { this.popup = null; },
                 closePopup() {},
                 setIcon(icon) { this.icon = icon; }
@@ -65,17 +74,19 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
             return {
                 markers: [],
                 addLayer(marker) { this.markers.push(marker); },
+                removeLayer(marker) { this.markers = this.markers.filter(item => item !== marker); },
                 clearLayers() { this.markers.length = 0; },
                 off() { this.detached = true; },
                 addTo(map) { map.layers.add(this); }
             };
         },
+        featureGroup() { return this.layerGroup(); },
         markerClusterGroup() { return this.layerGroup(); },
         control: {
             layers() { return { removed: [], addTo() { if (controlFailure === 'layers') throw new Error('control failed'); }, addOverlay() {}, removeLayer(layer) { this.removed.push(layer); } }; },
             scale() { return { addTo() { if (controlFailure === 'scale') throw new Error('control failed'); } }; }
         },
-        popup() { return eventSource({ setContent() { return this; }, getElement() { return { querySelectorAll() { return []; } }; }, update() { this.updates = (this.updates ?? 0) + 1; } }); },
+        popup(options) { return eventSource({ options, setContent() { return this; }, getElement() { return { querySelectorAll() { return []; } }; }, update() { this.updates = (this.updates ?? 0) + 1; } }); },
         icon(options) { return options; },
         Control: {
             extend(definition) {
@@ -104,12 +115,12 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
     const window = deferredLoader ? {} : { L };
     const module = new SourceTextModule(source, { context: createContext({ window, L, console,
         document: { querySelector: () => ({}) },
-        setTimeout: deferredLoader ? callback => loader.push(callback) : setTimeout }) });
+        setTimeout: deferredLoader ? callback => loader.push(callback) : deferTimers ? callback => timers.push(callback) : setTimeout }) });
     await module.link(() => { throw new Error('Unexpected module dependency'); });
     await module.evaluate();
     const api = module.namespace;
 
-    async function createMap(id, options = {}) {
+    async function createMap(id, options = {}, creationKey) {
         const reference = {
             disposed: false, calls: [],
             invokeMethodAsync(method, ...args) {
@@ -118,7 +129,7 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
                 return Promise.resolve();
             }
         };
-        await api.createMap(id, JSON.stringify(options), reference);
+        await api.createMap(id, JSON.stringify(options), reference, creationKey);
         assert.deepEqual(reference.calls, [['OnJsMapCreated']]);
         reference.calls.length = 0;
         return reference;
@@ -139,7 +150,7 @@ async function createHarness({ deferredLoader = false, tileFailure = false, cont
         return markers.at(-1);
     }
 
-    return { api, window, maps, createMap, addMarker,
+    return { api, window, maps, createMap, addMarker, timers,
         finishLoader() { window.L = L; for (const callback of loader.splice(0)) callback(); } };
 }
 
@@ -434,7 +445,276 @@ test('old cluster focus callback cannot open a removed or replacement group popu
     api.removeMarkerGroupLayer('first', 'same-layer');
     await addMarker('first', 'initial-group');
     assert.doesNotThrow(() => deferred(), 'Old callback must not access map flyTo or old popup');
+    assert.equal(window._leafletMaps.first.navigation.length, 0);
     assert.notEqual(window._leafletMarkers.first['same-layer']['same-marker'], marker);
+});
+
+async function markerFocusHarness({ clustered = false, popup = true } = {}) {
+    const h = await createHarness({ deferTimers: true });
+    await h.createMap('focus', {}, 'current');
+    await h.api.addMarkerGroupLayer('focus', JSON.stringify({
+        id: 'group', layerType: clustered ? 'MarkerClusterLayer' : 'FeatureGroup',
+        markers: [{
+            id: 'marker', location: [50, 30], popup: popup ? { html: 'marker', options: { autoPan: false } } : undefined
+        }]
+    }), 'attachment');
+    const map = h.window._leafletMaps.focus;
+    const group = h.window._leafletLayers.focus.group;
+    const marker = h.window._leafletMarkers.focus.group.marker;
+    const highlights = [];
+    marker._icon = { classList: { remove: name => highlights.push(['remove', name]), add: name => highlights.push(['add', name]) } };
+    let clusterCalls = 0;
+    if (clustered) group.zoomToShowLayer = (_, callback) => { clusterCalls++; callback(); };
+    return {
+        ...h, map, group, marker, highlights, get clusterCalls() { return clusterCalls; },
+        focus: options => h.api.focusMarker(
+            'focus', 'group', 'marker', options == null ? options : JSON.stringify(options), 'current', 'attachment'
+        )
+    };
+}
+
+test('legacy marker focus preserves cluster expansion, flyTo, popup and delayed highlight for omitted and null options', async () => {
+    const h = await markerFocusHarness({ clustered: true });
+    h.focus();
+    h.focus(null);
+    assert.equal(h.clusterCalls, 2);
+    assert.equal(h.marker.popupOpened, 2);
+    assert.deepEqual(JSON.parse(JSON.stringify(h.map.navigation)), Array(2).fill(['flyTo', { lat: 50, lng: 30 }, 13, { duration: 0.5 }]));
+    assert.equal(h.highlights.length, 0);
+    assert.equal(h.timers.length, 2);
+    for (const highlight of h.timers) highlight();
+    assert.deepEqual(h.highlights, [
+        ['remove', 'marker-highlight'], ['add', 'marker-highlight'],
+        ['remove', 'marker-highlight'], ['add', 'marker-highlight']
+    ]);
+});
+
+test('explicit marker Popup preserves popup options and restartable highlight without programmatic pan or zoom', async () => {
+    const h = await markerFocusHarness();
+    h.map.pointInView = false;
+    h.focus({});
+    h.focus({ highlight: false });
+    h.focus({});
+    assert.equal(h.marker.getPopup().options.autoPan, false);
+    assert.equal(h.marker.popupOpened, 3);
+    assert.deepEqual(h.map.navigation, []);
+    assert.equal(h.highlights.filter(([operation]) => operation === 'add').length, 2);
+});
+
+test('explicit marker Popup without a popup pans only when outside bounds', async () => {
+    const h = await markerFocusHarness({ popup: false });
+    h.focus({});
+    assert.equal(h.map.navigation.length, 0);
+    h.map.pointInView = false;
+    h.focus({ animationDuration: 0 });
+    assert.deepEqual(JSON.parse(JSON.stringify(h.map.navigation)), [['panTo', { lat: 50, lng: 30 }, { duration: 0, animate: false }]]);
+    assert.equal(h.highlights.filter(([operation]) => operation === 'add').length, 2);
+});
+
+test('explicit marker PanTo and FlyTo use their native operations and configured duration', async () => {
+    const h = await markerFocusHarness();
+    h.focus({ navigationMode: 'PanTo', animationDuration: 0.75, highlight: false });
+    h.focus({ navigationMode: 'FlyTo', animationDuration: 1 });
+    h.focus({ navigationMode: 'FlyTo', animationDuration: 0, highlight: false });
+    h.focus({ navigationMode: 'FlyTo', animationDuration: -0.5, highlight: false });
+    assert.deepEqual(JSON.parse(JSON.stringify(h.map.navigation)), [
+        ['panTo', { lat: 50, lng: 30 }, { duration: 0.75 }],
+        ['flyTo', { lat: 50, lng: 30 }, 13, { duration: 1 }],
+        ['flyTo', { lat: 50, lng: 30 }, 13, { duration: 0, animate: false }],
+        ['flyTo', { lat: 50, lng: 30 }, 13, { duration: 0, animate: false }]
+    ]);
+    assert.equal(h.marker.popupOpened, undefined);
+    assert.equal(h.highlights.filter(([operation]) => operation === 'add').length, 1);
+});
+
+test('native Leaflet focus finishes at the starting zoom within the zoom limits', async () => {
+    const leaflet = await readFile(new URL('../src/OohelpSoft.Extensions.BlazorLeaflet/wwwroot/js/leaflet.js', import.meta.url), 'utf8');
+    let now = 0, frameId = 0;
+    const frames = new Map();
+    const browser = {
+        document: { documentElement: { style: {} }, createElement: () => ({}) },
+        navigator: { userAgent: 'Chrome', platform: 'Win32' },
+        screen: {},
+        setTimeout, clearTimeout,
+        Date: class extends Date { static now() { return now; } },
+        requestAnimationFrame(callback) { const id = ++frameId; frames.set(id, callback); return id; },
+        cancelAnimationFrame(id) { frames.delete(id); },
+        WebKitCSSMatrix: class { m11 = 1; }
+    };
+    browser.window = browser;
+    runInNewContext(leaflet, browser);
+    assert.ok(browser.L.Browser.any3d);
+
+    const h = await markerFocusHarness({ popup: false });
+    const { map } = h;
+    const { L } = browser;
+    // Run the real panTo/setView and the flyTo animation loop without a DOM.
+    Object.setPrototypeOf(map, L.Map.prototype);
+    delete map.getZoom;
+    delete map.getMinZoom;
+    delete map.getMaxZoom;
+    delete map.panTo;
+    delete map.flyTo;
+    map._loaded = true;
+    let moves = 0;
+    map._tryAnimatedPan = () => { moves++; return true; };
+    map._tryAnimatedZoom = () => false;
+    map._resetView = (_, zoom) => { moves++; map._zoom = zoom; };
+    map.getCenter = () => map._lastCenter;
+    map.getSize = () => L.point(900, 600);
+    map._move = (center, zoom) => {
+        moves++;
+        map._lastCenter = center;
+        map._zoom = zoom;
+        return map;
+    };
+    map.pointInView = false;
+
+    const tick = ms => {
+        now += ms;
+        for (const [id, callback] of [...frames]) {
+            frames.delete(id);
+            callback();
+        }
+    };
+
+    for (const navigationMode of ['Popup', 'PanTo', 'FlyTo']) {
+        const durations = navigationMode === 'FlyTo' ? [-0.5, 0, 0.5] : [0, 0.5];
+        for (const animationDuration of durations) {
+            // Fractional zoom values that can be observed during a Leaflet flight.
+            for (const [current, minZoom, maxZoom, expected] of [
+                [10.214, 0, 18, 10.214],
+                [10.214, 12, 18, 12],
+                [15.822, 0, 14, 14]
+            ]) {
+                map.options = { crs: L.CRS.EPSG3857, minZoom, maxZoom, zoomSnap: 1 };
+                map._zoom = current;
+                map._lastCenter = L.latLng(46.4825, 30.7233);
+                moves = 0;
+                h.focus({ navigationMode, animationDuration, highlight: false });
+                assert.equal(moves, 1);
+                if (navigationMode === 'FlyTo' && animationDuration > 0) {
+                    assert.equal(frames.size, 1);
+                    tick(75);
+                    assert.notEqual(map.getZoom(), current);
+                    tick(500);
+                    assert.ok(map.getCenter().equals(L.latLng(50, 30)));
+                }
+                assert.equal(frames.size, 0);
+                assert.equal(map.getZoom(), expected);
+                assert.equal(map.options.zoomSnap, 1);
+            }
+        }
+    }
+});
+
+test('explicit marker modes never expand a cluster or highlight its parent', async () => {
+    const h = await markerFocusHarness({ clustered: true });
+    h.focus({});
+    h.focus({ navigationMode: 'PanTo' });
+    h.focus({ navigationMode: 'FlyTo' });
+    assert.equal(h.clusterCalls, 0);
+    assert.equal(h.marker.popupOpened, undefined);
+    assert.equal(h.highlights.length, 0);
+    assert.deepEqual(h.map.navigation.map(([mode]) => mode), ['panTo', 'flyTo']);
+    h.map.layers.add(h.marker);
+    h.focus({});
+    assert.equal(h.clusterCalls, 0);
+    assert.equal(h.marker.popupOpened, 1);
+    assert.equal(h.highlights.length, 2);
+});
+
+test('explicit marker focus ignores a hidden or removed target and rejects an old map context', async () => {
+    const h = await markerFocusHarness();
+    h.map.removeLayer(h.group);
+    h.focus({ navigationMode: 'PanTo' });
+    h.map.layers.add(h.group);
+    await h.api.removeMarkersByIdsAsync('focus', 'group', JSON.stringify(['marker']));
+    h.focus({ navigationMode: 'FlyTo' });
+    await h.createMap('focus', {}, 'replacement');
+    assert.throws(() => h.focus({}), /no longer active/);
+    assert.deepEqual(h.map.navigation, []);
+    assert.deepEqual(h.highlights, []);
+});
+
+test('explicit marker focus rejects a stale attachment key after same-ID replacement and reattachment', async () => {
+    const h = await createHarness({ deferTimers: true });
+    await h.createMap('focus', {}, 'map-key');
+    const map = h.window._leafletMaps.focus;
+    const add = (latitude, key) => h.api.addMarkerGroupLayer('focus', JSON.stringify({
+        id: 'group', layerType: 'FeatureGroup',
+        markers: [{ id: 'marker', location: [latitude, 30], popup: { html: 'marker' } }]
+    }), key);
+    const marker = () => h.window._leafletMarkers.focus.group.marker;
+    const focus = (key, navigationMode) => h.api.focusMarker(
+        'focus', 'group', 'marker', JSON.stringify({ navigationMode }), 'map-key', key
+    );
+
+    await add(50, 'old');
+    await add(51, 'replacement');
+    const replacement = marker();
+    focus('old', 'Popup');
+    focus('old', 'PanTo');
+    assert.equal(replacement.popupOpened, undefined);
+    assert.deepEqual(map.navigation, []);
+    focus('replacement', 'Popup');
+    assert.equal(replacement.popupOpened, 1);
+
+    h.api.removeMarkerGroupLayer('focus', 'group', 'map-key');
+    await add(51, 'reattached');
+    const reattached = marker();
+    focus('replacement', 'Popup');
+    focus('replacement', 'PanTo');
+    assert.equal(reattached.popupOpened, undefined);
+    assert.deepEqual(map.navigation, []);
+    focus('reattached', 'PanTo');
+    assert.equal(map.navigation.at(-1)[1].lat, 51);
+
+    h.api.focusMarker('focus', 'group', 'marker');
+    assert.equal(reattached.popupOpened, 1);
+    assert.equal(map.navigation.at(-1)[0], 'flyTo');
+});
+
+test('explicit marker focus with a missing attachment key has no effects', async () => {
+    const h = await markerFocusHarness();
+    for (const key of [undefined, null, '']) {
+        for (const navigationMode of ['Popup', 'PanTo', 'FlyTo']) {
+            h.api.focusMarker('focus', 'group', 'marker', JSON.stringify({ navigationMode }), 'current', key);
+        }
+    }
+    assert.equal(h.marker.popupOpened, undefined);
+    assert.deepEqual(h.map.navigation, []);
+    assert.deepEqual(h.highlights, []);
+    h.api.focusMarker('focus', 'group', 'marker');
+    assert.equal(h.marker.popupOpened, 1);
+    assert.equal(h.map.navigation[0][0], 'flyTo');
+});
+
+test('failed reattachment only allows the old focus key while the old group is still registered', async () => {
+    const h = await createHarness();
+    await h.createMap('focus', { layersControl: {} }, 'map-key');
+    const groupJson = JSON.stringify({
+        id: 'group', layerType: 'FeatureGroup',
+        markers: [{ id: 'marker', location: [50, 30], popup: { html: 'marker' } }]
+    });
+    const focusOld = () => h.api.focusMarker('focus', 'group', 'marker', '{}', 'map-key', 'acknowledged');
+    await h.api.addMarkerGroupLayer('focus', groupJson, 'acknowledged');
+    const original = h.window._leafletMarkers.focus.group.marker;
+
+    const featureGroup = h.window.L.featureGroup;
+    h.window.L.featureGroup = () => { throw new Error('group creation failed'); };
+    await assert.rejects(h.api.addMarkerGroupLayer('focus', groupJson, 'first-retry'), /group creation failed/);
+    h.window.L.featureGroup = featureGroup;
+    focusOld();
+    assert.equal(original.popupOpened, 1);
+
+    h.window._leafletLayersControl.focus.addOverlay = () => { throw new Error('overlay registration failed'); };
+    await assert.rejects(h.api.addMarkerGroupLayer('focus', groupJson, 'second-retry'), /overlay registration failed/);
+    const replacement = h.window._leafletMarkers.focus.group.marker;
+    assert.notEqual(replacement, original);
+    focusOld();
+    assert.equal(replacement.popupOpened, undefined);
+    assert.deepEqual(h.window._leafletMaps.focus.navigation, []);
 });
 
 test('visibility toggles reuse initially hidden group, markers and control registration', async () => {

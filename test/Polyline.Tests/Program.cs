@@ -59,6 +59,157 @@ var tests = new (string Name, Func<Task> Run)[]
         await Throws<KeyNotFoundException>(() => group.UpdatePolylinesStylesBulkAsync([new() { Id = "a", Options = new() { Color = "blue" } }, new() { Id = "missing", Options = new() }]));
         Check(line.Options is null);
     }),
+    ("marker focus preserves legacy calls and appends serialized options and identity keys", async () =>
+    {
+        var js = new FakeInterop();
+        var map = ReadyMap(js);
+        var markers = new TestMarkerGroup("markers");
+        await markers.AddMarkersAsync([new Marker { Id = "Marker", Location = new(50, 30) }]);
+        await map.AddMarkerGroupLayerAsync(markers);
+        var attachmentKey = js.Calls[0].Args[2];
+        Check(attachmentKey is string keyValue && keyValue.Length > 0);
+        js.Calls.Clear();
+
+        Func<string, Task> legacy = markers.FocusMarker;
+        await legacy("Marker");
+        await markers.FocusMarker("Marker", null);
+        await markers.FocusMarker("marker", new());
+        Check(js.Calls.Count == 3 && js.Calls.All(call => call.Method == "focusMarker"));
+        Check(js.Calls[0].Args.SequenceEqual(new object?[] { map.Id, "markers", "Marker" }));
+        Check(js.Calls[1].Args.SequenceEqual(js.Calls[0].Args));
+        var explicitCall = js.Calls[2].Args;
+        Check(explicitCall.Length == 6 && explicitCall.Take(3).SequenceEqual(js.Calls[0].Args));
+        Check(explicitCall[4] is string key && key.Length > 0);
+        Check(Equals(explicitCall[5], attachmentKey));
+        using var options = JsonDocument.Parse((string)explicitCall[3]!);
+        Check(options.RootElement.GetProperty("navigationMode").GetString() == "Popup");
+        Check(options.RootElement.GetProperty("highlight").GetBoolean());
+        Check(options.RootElement.GetProperty("animationDuration").GetDouble() == 0.5);
+        await map.DisposeAsync();
+    }),
+    ("marker focus during replacement carries the old attachment key until C# publishes the new group", async () =>
+    {
+        var js = new FakeInterop();
+        var map = ReadyMap(js);
+        var old = new TestMarkerGroup("markers");
+        await old.AddMarkersAsync([new Marker { Id = "marker", Location = new(50, 30) }]);
+        await map.AddMarkerGroupLayerAsync(old);
+        var oldKey = js.Calls[^1].Args[2];
+        var replacement = new TestMarkerGroup("markers");
+        await replacement.AddMarkersAsync([new Marker { Id = "marker", Location = new(51, 31) }]);
+
+        js.BlockMethod = "addMarkerGroupLayer";
+        js.Block = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adding = map.AddMarkerGroupLayerAsync(replacement);
+        var newKey = js.Calls[^1].Args[2];
+        Check(!adding.IsCompleted && !Equals(oldKey, newKey));
+        Check(map.TryGetLayer("markers", out var registered) && ReferenceEquals(registered, old));
+        await old.FocusMarker("marker", new());
+        Check(js.Calls[^1].Method == "focusMarker" && Equals(js.Calls[^1].Args[5], oldKey));
+        var count = js.Calls.Count;
+        await replacement.FocusMarker("marker", new());
+        Check(js.Calls.Count == count);
+
+        js.Block.SetResult();
+        await adding;
+        await old.FocusMarker("marker", new());
+        Check(js.Calls.Count == count);
+        await replacement.FocusMarker("marker", new());
+        Check(js.Calls[^1].Method == "focusMarker" && Equals(js.Calls[^1].Args[5], newKey));
+        await map.DisposeAsync();
+    }),
+    ("reattaching a marker group publishes a fresh key only after add acknowledgement", async () =>
+    {
+        var js = new FakeInterop();
+        var map = ReadyMap(js);
+        var markers = new TestMarkerGroup("markers");
+        await markers.AddMarkersAsync([new Marker { Id = "marker", Location = new(50, 30) }]);
+        await map.AddMarkerGroupLayerAsync(markers);
+        var oldKey = js.Calls[^1].Args[2];
+
+        js.BlockMethod = "addMarkerGroupLayer";
+        js.Block = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adding = map.AddMarkerGroupLayerAsync(markers);
+        var newKey = js.Calls[^1].Args[2];
+        Check(!adding.IsCompleted && !Equals(oldKey, newKey));
+        await markers.FocusMarker("marker", new());
+        Check(js.Calls[^1].Method == "focusMarker" && Equals(js.Calls[^1].Args[5], oldKey));
+
+        js.Block.SetResult();
+        await adding;
+        await markers.FocusMarker("marker", new());
+        Check(js.Calls[^1].Method == "focusMarker" && Equals(js.Calls[^1].Args[5], newKey));
+        await map.DisposeAsync();
+    }),
+    ("a failed same-instance marker reattachment does not publish the unacknowledged key", async () =>
+    {
+        var js = new FakeInterop();
+        var map = ReadyMap(js);
+        var markers = new TestMarkerGroup("markers");
+        await markers.AddMarkersAsync([new Marker { Id = "marker", Location = new(50, 30) }]);
+        await map.AddMarkerGroupLayerAsync(markers);
+        var acknowledgedKey = js.Calls[^1].Args[2];
+
+        js.Fail = true;
+        await Throws<JSException>(() => map.AddMarkerGroupLayerAsync(markers));
+        Check(!Equals(js.Calls[^1].Args[2], acknowledgedKey));
+        js.Fail = false;
+        await markers.FocusMarker("marker", new());
+        Check(js.Calls[^1].Method == "focusMarker" && Equals(js.Calls[^1].Args[5], acknowledgedKey));
+        await map.DisposeAsync();
+    }),
+    ("explicit marker focus skips missing markers and replaced groups", async () =>
+    {
+        var js = new FakeInterop();
+        var map = ReadyMap(js);
+        var markers = new TestMarkerGroup("markers");
+        await markers.AddMarkersAsync([new Marker { Id = "marker", Location = new(50, 30) }]);
+        await map.AddMarkerGroupLayerAsync(markers);
+        js.Calls.Clear();
+        await markers.FocusMarker("missing", new());
+        Check(js.Calls.Count == 0);
+
+        await map.AddMarkerGroupLayerAsync(new TestMarkerGroup("MARKERS"));
+        js.Calls.Clear();
+        await markers.FocusMarker("marker", new());
+        Check(js.Calls.Count == 0);
+        await map.DisposeAsync();
+    }),
+    ("polyline focus preserves context key position when appending options and keeps legacy null behavior", async () =>
+    {
+        var js = new FakeInterop();
+        var map = ReadyMap(js);
+        var group = new PolylineGroupLayer("lines", [Line("line")]);
+        await map.AddPolylineGroupLayerAsync(group);
+        var key = js.Calls[0].Args[2];
+        js.Calls.Clear();
+
+        Func<string, Task> legacy = group.FocusPolyline;
+        await legacy("line");
+        await group.FocusPolyline("line", null);
+        await group.FocusPolyline("line", new()
+        {
+            NavigationMode = FocusNavigationMode.FlyTo,
+            Highlight = false,
+            AnimationDuration = 0
+        });
+        Check(js.Calls.Count == 3 && js.Calls.All(call => call.Method == "focusPolyline"));
+        Check(js.Calls[0].Args.SequenceEqual(new object?[] { map.Id, "lines", "line", key }));
+        Check(js.Calls[1].Args.SequenceEqual(js.Calls[0].Args));
+        var explicitCall = js.Calls[2].Args;
+        Check(explicitCall.Length == 5 && explicitCall.Take(4).SequenceEqual(js.Calls[0].Args));
+        using var options = JsonDocument.Parse((string)explicitCall[4]!);
+        Check(options.RootElement.GetProperty("navigationMode").GetString() == "FlyTo");
+        Check(!options.RootElement.GetProperty("highlight").GetBoolean());
+        Check(options.RootElement.GetProperty("animationDuration").GetDouble() == 0);
+        await Throws<KeyNotFoundException>(() => group.FocusPolyline("missing", new()));
+
+        await map.RemovePolylineGroupLayerAsync("lines");
+        js.Calls.Clear();
+        await group.FocusPolyline("line", new());
+        Check(js.Calls.Count == 0);
+        await map.DisposeAsync();
+    }),
     ("empty batches avoid interop", async () =>
     {
         var js = new FakeInterop(); var group = new PolylineGroupLayer("group"); await Attach(group, new FakeMap(js)); js.Calls.Clear();

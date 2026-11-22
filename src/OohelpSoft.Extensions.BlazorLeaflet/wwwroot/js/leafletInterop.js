@@ -7,6 +7,7 @@ window._leafletMarkers = window._leafletMarkers || {};    // mapId → { layerNa
 window._leafletPolylines = window._leafletPolylines || {};
 
 const mapContexts = new Map();
+const markerGroupFocusKeys = new WeakMap();
 
 // ----------------------------
 //  Lazy Leaflet loader
@@ -137,7 +138,7 @@ export function registerMarkerDragEndCallback(mapId) {
     context.markerDragEndRegistered = true;
 }
 
-export async function addMarkerGroupLayer(mapId, layerJson) {
+export async function addMarkerGroupLayer(mapId, layerJson, focusAttachmentKey) {
     const map = window._leafletMaps?.[mapId];
     const context = mapContexts.get(mapId);
     if (!map || !context?.active) return;
@@ -152,6 +153,7 @@ export async function addMarkerGroupLayer(mapId, layerJson) {
     const previousId = Object.keys(window._leafletMarkers[mapId]).find(id => id.toLowerCase() === layerId.toLowerCase());
     if (previousId !== undefined) removeMarkerGroupLayer(mapId, previousId);
 
+    markerGroupFocusKeys.set(layer, focusAttachmentKey);
     window._leafletLayers[mapId][layerId] = layer;
     window._leafletMarkers[mapId][layerId] = {};
 
@@ -311,9 +313,13 @@ export function updateMarkersIconsBulk(mapId, layerId, iconUpdatesJson) {
     }
 }
 
-export function focusMarker(mapId, layerId, markerId) {
+export function focusMarker(mapId, layerId, markerId, optionsJson, creationKey, focusAttachmentKey) {
+    const explicit = optionsJson != null;
+    if (explicit && !focusAttachmentKey) return;
+    if (explicit) requireMapContext(mapId, creationKey ?? undefined);
     const map = window._leafletMaps?.[mapId];
     const layer = window._leafletLayers?.[mapId]?.[layerId];
+    if (explicit && markerGroupFocusKeys.get(layer) !== focusAttachmentKey) return;
     const marker = window._leafletMarkers?.[mapId]?.[layerId]?.[markerId];
 
     if (!map || !layer || !marker) {
@@ -321,6 +327,21 @@ export function focusMarker(mapId, layerId, markerId) {
         return;
     }
     if (!map.hasLayer(layer)) return;
+
+    if (explicit) {
+        const isMarkerDisplayed = () => !layer.zoomToShowLayer || map.hasLayer(marker);
+        const { highlight = true, ...options } = JSON.parse(optionsJson);
+        const openPopup = marker.getPopup() ? () => {
+            if (isMarkerDisplayed()) marker.openPopup();
+        } : null;
+        focusTarget(map, marker.getLatLng(), options, openPopup);
+        if (highlight && window._leafletMaps?.[mapId] === map && map.hasLayer(layer) &&
+            window._leafletLayers?.[mapId]?.[layerId] === layer &&
+            window._leafletMarkers?.[mapId]?.[layerId]?.[markerId] === marker && isMarkerDisplayed()) {
+            highlightMarker(marker);
+        }
+        return;
+    }
 
     const openAndHighlight = () => {
         if (!map.hasLayer(layer) || window._leafletLayers?.[mapId]?.[layerId] !== layer ||
@@ -357,6 +378,40 @@ function highlightMarker(marker) {
     el.classList.remove("marker-highlight");
     void el.offsetWidth;
     el.classList.add("marker-highlight");
+}
+
+function focusTarget(map, point, { navigationMode = 'Popup', animationDuration = 0.5 }, openPopup) {
+    switch (navigationMode) {
+        case 'Popup':
+            if (openPopup) {
+                openPopup();
+                return;
+            }
+            if (map.getBounds().contains(point)) return;
+            break;
+        case 'PanTo':
+        case 'FlyTo':
+            break;
+        default:
+            throw new Error('Unknown focus navigation mode');
+    }
+
+    const duration = navigationMode === 'FlyTo' ? Math.max(0, animationDuration) : animationDuration;
+    const options = { duration };
+    if (duration === 0) options.animate = false;
+    // panTo and non-animated flyTo use setView, which normally snaps fractional zoom.
+    const zoomSnap = map.options.zoomSnap;
+    map.options.zoomSnap = 0;
+    try {
+        if (navigationMode === 'FlyTo') {
+            const zoom = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), map.getZoom()));
+            map.flyTo(point, zoom, options);
+        } else {
+            map.panTo(point, options);
+        }
+    } finally {
+        map.options.zoomSnap = zoomSnap;
+    }
 }
 
 function createMarkerInternal(m, context, isOwned = () => true) {
@@ -751,11 +806,42 @@ export function updatePolylineLocations(mapId, layerId, polylineId, locationsJso
     }
 }
 
-export function focusPolyline(mapId, layerId, polylineId, creationKey) {
+export function focusPolyline(mapId, layerId, polylineId, creationKey, optionsJson) {
     const { context, layer, polylines } = polylineGroup(mapId, layerId, creationKey);
     if (!Object.hasOwn(polylines, polylineId)) throw new Error('Polyline was not found');
     if (!context.map.hasLayer(layer)) return;
-    context.map.fitBounds(polylines[polylineId].getBounds(), { padding: [50, 50] });
+    const polyline = polylines[polylineId];
+    if (optionsJson == null) {
+        context.map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+        return;
+    }
+
+    const point = polylineMidpoint(polyline.getLatLngs());
+    const openPopup = polyline.getPopup() ? () => polyline.openPopup(point) : null;
+    focusTarget(context.map, point, JSON.parse(optionsJson), openPopup);
+}
+
+function polylineMidpoint(points) {
+    const lengths = [];
+    let total = 0;
+    for (let i = 1; i < points.length; i++) {
+        const length = points[i - 1].distanceTo(points[i]);
+        lengths.push(length);
+        total += length;
+    }
+
+    let remaining = total / 2;
+    for (let i = 0; i < lengths.length; i++) {
+        const length = lengths[i];
+        if (length === 0) continue;
+        if (remaining <= length) {
+            const from = points[i], to = points[i + 1];
+            const fraction = remaining / length;
+            return L.latLng(from.lat + (to.lat - from.lat) * fraction, from.lng + (to.lng - from.lng) * fraction);
+        }
+        remaining -= length;
+    }
+    return points[0];
 }
 
 export function removePolylineGroupLayer(mapId, layerId, creationKey) {

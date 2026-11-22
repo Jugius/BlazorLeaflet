@@ -19,7 +19,20 @@ async function harness() {
     const L = {
         map(id) {
             return { id, layers: new Set(), hasLayer(layer) { return this.layers.has(layer); },
+                options: { zoomSnap: 1 }, navigation: [], pointInView: true,
+                getZoom() { return 13; }, getMinZoom() { return 0; }, getMaxZoom() { return 18; },
+                getBounds() { return { contains: () => this.pointInView }; },
+                panTo(point, options) { this.navigation.push({ point, options }); },
+                flyTo(point, zoom, options) { this.navigation.push({ point, zoom, options }); },
                 removeLayer(layer) { this.layers.delete(layer); }, fitBounds(value) { this.bounds = value; }, remove() { this.removed = true; } };
+        },
+        latLng(lat, lng) {
+            return { lat, lng, distanceTo(other) {
+                const radians = value => value * Math.PI / 180;
+                const a = Math.sin(radians(other.lat - lat) / 2) ** 2 +
+                    Math.cos(radians(lat)) * Math.cos(radians(other.lat)) * Math.sin(radians(other.lng - lng) / 2) ** 2;
+                return 2 * 6371000 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            } };
         },
         tileLayer() { return { addTo() {} }; },
         featureGroup() {
@@ -39,6 +52,7 @@ async function harness() {
         polyline(locations, options) {
             const item = events({ id: null, locations, options: { color: '#3388ff', weight: 3, opacity: 1, dashArray: null, ...options },
                 bindPopup(popup) { this.popup = popup; this.id = popup.html; return this; }, getPopup() { return this.popup; },
+                openPopup(point) { this.openedPopupAt = point; },
                 closePopup() { this.closed = true; }, unbindPopup() { this.popup = null; },
                 setStyle(style) {
                     Object.assign(this.options, style);
@@ -47,15 +61,15 @@ async function harness() {
                         throw Error('style failed');
                     }
                 },
-                getLatLngs() { return this.locations; }, setLatLngs(value) {
-                    this.locations = value;
+                getLatLngs() { return this.locations.map(([lat, lng]) => L.latLng(lat, lng)); }, setLatLngs(value) {
+                    this.locations = value.map(point => Array.isArray(point) ? point : [point.lat, point.lng]);
                     if (failures.geometry) { delete failures.geometry; throw Error('geometry failed'); }
                 }, getBounds() { return bounds(this.locations); }
             });
             created.push(item);
             return item;
         },
-        popup() { return events({ setContent(html) { this.html = html; return this; } }); },
+        popup(options) { return events({ options, setContent(html) { this.html = html; return this; } }); },
         control: { layers() { return { overlays: new Set(), addTo() {}, addOverlay(layer) { this.overlays.add(layer); }, removeLayer(layer) { this.overlays.delete(layer); } }; } }
     };
     const window = { L };
@@ -109,6 +123,70 @@ test('geometry and focus reuse the line and fit its entire bounds without openin
     assert.equal(h.window._leafletMaps.map.layers.size, 1);
     assert.equal(h.window._leafletPolylines.map.group.line, first);
     assert.equal(h.created.length, 1);
+    h.window._leafletMaps.map.bounds = null;
+    h.api.focusPolyline('map', 'group', 'line', 'map', null);
+    assert.deepEqual(JSON.parse(json(h.window._leafletMaps.map.bounds.points)), locations);
+    assert.equal(first.openedPopupAt, undefined);
+});
+
+test('explicit polyline Popup opens at the halfway point by segment length and keeps native popup options', async () => {
+    const h = await harness();
+    const locations = [[0, 0], [0, 0], [0, 2], [0, 8], [0, 8]];
+    h.add('group', [{ ...line(), locations, popup: { html: 'test', options: { autoPan: false } } }]);
+    h.api.focusPolyline('map', 'group', 'line', 'map', json({ navigationMode: 'Popup' }));
+    const map = h.window._leafletMaps.map, polyline = h.created[0];
+    assert.equal(polyline.openedPopupAt.lat, 0);
+    assert.ok(Math.abs(polyline.openedPopupAt.lng - 4) < 1e-12);
+    assert.equal(polyline.getPopup().options.autoPan, false);
+    assert.deepEqual(map.navigation, []);
+    assert.equal(map.bounds, undefined);
+});
+
+test('explicit polyline Popup without a popup pans only for an offscreen midpoint and handles zero-length lines', async () => {
+    const h = await harness();
+    h.add('group', [{ ...line(), locations: [[50, 30], [50, 30]], popup: undefined }]);
+    const map = h.window._leafletMaps.map;
+    h.api.focusPolyline('map', 'group', 'line', 'map', json({}));
+    assert.deepEqual(map.navigation, []);
+    map.pointInView = false;
+    h.api.focusPolyline('map', 'group', 'line', 'map', json({ animationDuration: 0 }));
+    assert.deepEqual(JSON.parse(json(map.navigation)), [{ point: { lat: 50, lng: 30 }, options: { duration: 0, animate: false } }]);
+    assert.equal(map.bounds, undefined);
+});
+
+test('explicit polyline PanTo and FlyTo target the midpoint with the configured duration and no highlight', async () => {
+    const h = await harness();
+    h.add('group', [{ ...line(), locations: [[0, 0], [0, 2]] }]);
+    const map = h.window._leafletMaps.map, polyline = h.created[0];
+    const initialStyle = { ...polyline.options };
+    for (const options of [
+        { navigationMode: 'PanTo', animationDuration: 0.75 },
+        { navigationMode: 'FlyTo', animationDuration: 1 },
+        { navigationMode: 'FlyTo', animationDuration: 0 }
+    ]) h.api.focusPolyline('map', 'group', 'line', 'map', json(options));
+    assert.deepEqual(JSON.parse(json(map.navigation)), [
+        { point: { lat: 0, lng: 1 }, options: { duration: 0.75 } },
+        { point: { lat: 0, lng: 1 }, zoom: 13, options: { duration: 1 } },
+        { point: { lat: 0, lng: 1 }, zoom: 13, options: { duration: 0, animate: false } }
+    ]);
+    assert.equal(polyline.openedPopupAt, undefined);
+    assert.equal(map.bounds, undefined);
+    assert.deepEqual(polyline.options, initialStyle);
+});
+
+test('explicit polyline focus does not pan for a hidden group or a missing line and rejects an old context', async () => {
+    const h = await harness();
+    h.add('group', [line()], false);
+    const map = h.window._leafletMaps.map;
+    const options = json({ navigationMode: 'PanTo' });
+    h.api.focusPolyline('map', 'group', 'line', 'map', options);
+    h.api.setPolylineGroupLayerVisibility('map', 'group', true);
+    h.api.removePolylinesByIdsAsync('map', 'group', json(['line']));
+    assert.throws(() => h.api.focusPolyline('map', 'group', 'line', 'map', options), /not found/);
+    await h.create('map', 'replacement');
+    assert.throws(() => h.api.focusPolyline('map', 'group', 'line', 'map', options), /no longer active/);
+    assert.deepEqual(map.navigation, []);
+    assert.equal(map.bounds, undefined);
 });
 
 test('hidden group accepts updates and LayersControl visibility remains authoritative', async () => {
